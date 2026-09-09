@@ -96,7 +96,6 @@
   .legend i::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--muted);}
   .legend i.appt::before{background:var(--appt);}
   .legend i.task::before{background:var(--stale);}
-  .legend i.expiry::before{background:var(--cold);}
   .legend i.event::before{background:var(--fresh);}
   .calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
   .wd{font-size:11px;color:var(--muted);text-align:center;padding:2px 0;}
@@ -110,7 +109,6 @@
       -webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}
   .ci.appt{border-color:var(--appt);color:var(--appt);}
   .ci.task{border-color:var(--stale);color:var(--stale);}
-  .ci.expiry{border-color:var(--cold);color:var(--cold);}
   .ci.event{border-color:var(--fresh);color:var(--fresh);}
   .ci.done{opacity:.55;text-decoration:line-through;}
   @media(max-width:720px){ .calCell{min-height:56px;} .calHead .legend{display:none;} }
@@ -189,20 +187,14 @@ const LINES = [
 // 加字段 = 在 fields 里加一项，表单和存储自动跟上。
 const SCHEMA = {
   task: {
-    nav:"任务", title:"任务", sub:"有截止日、做完就消失的事",
+    nav:"待办", title:"待办", sub:"有截止日的、会过期的、等回复的——共性是有个日期在逼你动",
     fields:[
       {k:"title", label:"要做什么", type:"text", wide:true},
-      {k:"tag",   label:"分类", type:"select", options:["课程","申请","杂事"]},
+      {k:"tag",   label:"分类", type:"select", options:["课程","申请","杂事","证件·流程"]},
       {k:"due",   label:"截止日", type:"date"},
-    ]},
-  expiry: {
-    nav:"到期", title:"到期与流程", sub:"低频但错过就是硬后果的东西",
-    fields:[
-      {k:"title",  label:"事项", type:"text", wide:true},
-      {k:"due",    label:"到期日（有固定日期填这个）", type:"date"},
-      {k:"lastc",  label:"上次往来（等回复的填这个）", type:"date"},
-      {k:"remind", label:"窗口（天）", type:"number", def:30},
-      {k:"ball",   label:"球在谁手上", type:"select", options:["我","对方","无"]},
+      {k:"lastc", label:"上次往来（等回复的填）", type:"date"},
+      {k:"remind", label:"窗口（天）", type:"number", def:7},
+      {k:"ball",  label:"球在谁手上", type:"select", options:["无","我","对方"]},
     ]},
   appt: {
     nav:"日历", title:"预约", sub:"发生在某天的事，不是截止于某天的事",
@@ -343,15 +335,18 @@ const daysSince = k => k ? diffDays(toDate(k), toDate(dayKey())) : null;   // �
 // ============================================================
 const all = t => items.filter(i=>i.type===t && !i.deleted);
 
-const openTasks    = () => all("task").filter(t=>!t.done)
-                             .sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
-const dueSoon      = (n=7) => openTasks().filter(t=>t.due && daysUntil(t.due)<=n);
-const expiryAlerts = () => all("expiry").filter(e=>{
-                             const w = +e.remind||30;
-                             if(e.due)   return daysUntil(e.due) <= w;   // 固定到期日：进入提醒窗口
-                             if(e.lastc) return daysSince(e.lastc) >= w; // 流程件：沉默超过窗口，该催了
-                             return false;
-                           }).sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
+// 待办 = task + expiry 两种 type 一起读（合并页，历史数据零迁移，新录入统一写 task）
+const allTodos  = () => [...all("task"), ...all("expiry")];
+const openTodos = () => allTodos().filter(t=>!t.done)
+                          .sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999")
+                                    || (a.lastc||"").localeCompare(b.lastc||""));
+// 上首页的规则：每条用自己的窗口（没设默认 7 天）；有 due 看倒计时，只有 lastc 看沉默
+const todoAlerts = () => openTodos().filter(t=>{
+                            const w = +t.remind||7;
+                            if(t.due)   return daysUntil(t.due) <= w;
+                            if(t.lastc) return daysSince(t.lastc) >= w;
+                            return false;
+                          });
 // 未来 7 天内「想去 / 已报名」的活动 → 上首页
 const upcomingEvts = () => all("event")
                              .filter(e=>e.date && ["想去","已报名"].includes(e.status)
@@ -430,38 +425,37 @@ function list(arr, rowFn, emptyMsg){
 // ============================================================
 // 6. 各视图
 // ============================================================
+// 待办行渲染——首页和待办页共用；acts 传按钮 HTML
+function todoRow(t, acts=""){
+  const ball = t.ball&&t.ball!=="无" ? ` · 球在${esc(t.ball)}` : "";
+  const tag  = t.tag || (t.type==="expiry" ? "证件·流程" : "");   // 旧 expiry 数据没有 tag
+  const w = +t.remind||7;
+  let num="—", cls="";
+  if(t.due){
+    const d = daysUntil(t.due);
+    cls = t.done ? "" : d<0||d<=1 ? "cold" : d<=w ? "stale" : "fresh";
+    num = d<0 ? `逾期${-d}天` : d===0 ? "今天" : `${d}天`;
+  }else if(t.lastc){
+    const n = daysSince(t.lastc);
+    cls = t.done ? "" : n>=w*2 ? "cold" : n>=w ? "stale" : "fresh";
+    num = `沉默${n}天`;
+  }
+  return `<div class="row ${t.done?"done":""}">
+    <span class="num ${cls}">${num}</span>
+    <div class="main"><div class="title">${esc(t.title)}</div>
+      <div class="meta"><span class="pill">${esc(tag)}</span> ${esc(t.due||"")}${
+        !t.due&&t.lastc?`上次往来 ${esc(t.lastc)}`:""}${ball}</div></div>
+    ${acts?`<div class="acts">${acts}</div>`:""}
+  </div>`;
+}
+
 function viewHome(){
-  const tasks = dueSoon(7), exp = expiryAlerts(), inbox = inboxOpen();
+  const todos = todoAlerts(), inbox = inboxOpen();
   const ppl = peopleDue(), rev = reviewDue();
 
-  const taskRows = list(tasks, t=>{
-    const d = daysUntil(t.due);
-    const label = d<0 ? `逾期 ${-d} 天` : d===0 ? "今天" : `${d} 天后`;
-    return `<div class="row">
-      <span class="num ${d<=1?"cold":d<=3?"stale":"fresh"}">${label}</span>
-      <div class="main"><div class="title">${esc(t.title)}</div>
-        <div class="meta"><span class="pill">${esc(t.tag||"")}</span></div></div>
-      <div class="acts"><button class="btn quiet" data-done="${t.id}">完成</button></div>
-    </div>`;
-  }, "七天内没有到期的任务。");
-
-  const expRows = list(exp, e=>{
-    const ball = e.ball&&e.ball!=="无" ? ` · 球在${esc(e.ball)}` : "";
-    if(e.due){
-      const d = daysUntil(e.due);
-      return `<div class="row">
-        <span class="num ${d<=7?"cold":"stale"}">${d<0?`逾期 ${-d}`:`${d} 天`}</span>
-        <div class="main"><div class="title">${esc(e.title)}</div>
-          <div class="meta">${esc(e.due)}${ball}</div></div>
-      </div>`;
-    }
-    const n = daysSince(e.lastc), w = +e.remind||30;   // 流程件：显示沉默天数
-    return `<div class="row">
-      <span class="num ${n>=w*2?"cold":"stale"}">沉默 ${n} 天</span>
-      <div class="main"><div class="title">${esc(e.title)}</div>
-        <div class="meta">上次往来 ${esc(e.lastc)}${ball}</div></div>
-    </div>`;
-  }, "没有临近的到期事项。");
+  const todoRows = list(todos,
+    t=>todoRow(t, `<button class="btn quiet" data-done="${t.id}">完成</button>`),
+    "窗口内没有该动的待办。");
 
   const evts = upcomingEvts();
   const evtRows = evts.map(e=>{
@@ -502,8 +496,7 @@ function viewHome(){
     <h2>今天</h2>
     <p class="sub">${new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}</p>
 
-    <div class="card"><h4>七天内到期</h4>${taskRows}</div>
-    <div class="card"><h4>到期与流程</h4>${expRows}</div>
+    <div class="card"><h4>待办 · 进入窗口的</h4>${todoRows}</div>
     ${appts.length?`<div class="card"><h4>预约</h4>${apptRows}</div>`:""}
     ${evts.length?`<div class="card"><h4>接下来的活动</h4>${evtRows}</div>`:""}
 
@@ -557,52 +550,16 @@ function viewCheckin(){
           <div class="lines">${rows}</div>${cals}`;
 }
 
-function viewTasks(){
-  const open = openTasks(), done = all("task").filter(t=>t.done).slice(-15).reverse();
-  const row = t=>{
-    const d = daysUntil(t.due);
-    return `<div class="row ${t.done?"done":""}">
-      <span class="num ${d===null?"":d<0?"cold":d<=3?"stale":"fresh"}">${
-        t.due ? (d<0?`逾期${-d}`:d===0?"今天":`${d}天`) : "—"}</span>
-      <div class="main"><div class="title">${esc(t.title)}</div>
-        <div class="meta"><span class="pill">${esc(t.tag||"")}</span> ${esc(t.due||"")}</div></div>
-      <div class="acts">
-        <button class="btn quiet" data-done="${t.id}">${t.done?"撤销":"完成"}</button>
-        ${editBtn(t.id)}${delBtn(t.id)}</div></div>`;
-  };
+function viewTodo(){
+  const open = openTodos();
+  const done = allTodos().filter(t=>t.done)
+                 .sort((a,b)=>(a.updatedAt||0)-(b.updatedAt||0)).slice(-15).reverse();
+  const acts = t => `<button class="btn quiet" data-done="${t.id}">${t.done?"撤销":"完成"}</button>
+        ${editBtn(t.id)}${delBtn(t.id)}`;
   return `<h2>${SCHEMA.task.title}</h2><p class="sub">${SCHEMA.task.sub}</p>
     ${formHTML("task")}
-    ${list(open,row,"没有待办。")}
-    ${done.length?`<h3>最近完成</h3>${done.map(row).join("")}`:""}`;
-}
-
-function viewExpiry(){
-  const arr = all("expiry").sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
-  const row = e=>{
-    const w = +e.remind||30;
-    const ball = e.ball&&e.ball!=="无" ? ` · 球在${esc(e.ball)}` : "";
-    let num, t, meta;
-    if(e.due){                                   // 固定到期日模式
-      const d = daysUntil(e.due);
-      t = d<0 ? "cold" : d<=w ? "stale" : "fresh";
-      num = d<0 ? `逾期${-d}` : `${d}天`;
-      meta = `${esc(e.due)} · 提前 ${w} 天提醒${ball}`;
-    }else if(e.lastc){                           // 流程件模式：看沉默天数
-      const n = daysSince(e.lastc);
-      t = n>=w*2 ? "cold" : n>=w ? "stale" : "fresh";
-      num = `沉默${n}天`;
-      meta = `上次往来 ${esc(e.lastc)} · 超 ${w} 天该催${ball}`;
-    }else{
-      t=""; num="—"; meta=`两个日期都没填，不会提醒${ball}`;
-    }
-    return `<div class="row">
-      <span class="num ${t}">${num}</span>
-      <div class="main"><div class="title">${esc(e.title)}</div>
-        <div class="meta">${meta}</div></div>
-      <div class="acts">${editBtn(e.id)}${delBtn(e.id)}</div></div>`;
-  };
-  return `<h2>${SCHEMA.expiry.title}</h2><p class="sub">${SCHEMA.expiry.sub}</p>
-    ${formHTML("expiry")}${list(arr,row,"还没有登记到期事项。签证、OSHC、护照、选课窗口都该在这。")}`;
+    ${list(open, t=>todoRow(t, acts(t)), "没有待办。")}
+    ${done.length?`<h3>最近完成</h3>${done.map(t=>todoRow(t, acts(t))).join("")}`:""}`;
 }
 
 function viewXhs(){
@@ -692,8 +649,7 @@ function viewCal(){
   const push = (day,label,cls) => { (byDay[day] ||= []).push({label,cls}); };
   all("appt").forEach(a=> a.date && push(a.date,
       (a.tag&&a.tag!=="其他" ? a.tag+"·" : "")+a.title, "appt"));
-  all("task").forEach(t=> t.due && push(t.due, t.title, "task"+(t.done?" done":"")));
-  all("expiry").forEach(e=> e.due && push(e.due, e.title, "expiry"));
+  allTodos().forEach(t=> t.due && push(t.due, t.title, "task"+(t.done?" done":"")));
   all("event").forEach(e=> e.date && push(e.date, e.title,
       "event"+(e.status==="没去"?" done":"")));      // 「没去」划掉但保留——对照组
 
@@ -731,8 +687,7 @@ function viewCal(){
       <button class="btn quiet" id="calPrev">‹</button>
       <b>${y} 年 ${m+1} 月</b>
       <button class="btn quiet" id="calNext">›</button>
-      <span class="legend"><i class="appt">预约</i><i class="task">任务</i><i
-        class="expiry">到期</i><i class="event">活动</i></span>
+      <span class="legend"><i class="appt">预约</i><i class="task">待办</i><i class="event">活动</i></span>
     </div>
     <div class="calGrid">${wd}${cells}</div>
     <h3>排期中的预约</h3>${upRows}`;
@@ -759,16 +714,15 @@ function viewInbox(){
 // 7. 路由与绑定
 // ============================================================
 const NAV = [
-  ["home","今天"], ["task",SCHEMA.task.nav], ["expiry",SCHEMA.expiry.nav],
-  ["cal","日历"], ["checkin","打卡"], ["-"], ["xhs",SCHEMA.xhs.nav], ["trade",SCHEMA.trade.nav],
+  ["home","今天"], ["task",SCHEMA.task.nav], ["cal","日历"], ["checkin","打卡"], ["-"], ["xhs",SCHEMA.xhs.nav], ["trade",SCHEMA.trade.nav],
   ["event",SCHEMA.event.nav], ["person",SCHEMA.person.nav], ["-"],
   ["inbox","Inbox"], ["review",SCHEMA.review.nav],
 ];
 
 function renderNav(){
   const badges = {
-    home: dueSoon(7).length + expiryAlerts().length,
-    task: openTasks().length,
+    home: todoAlerts().length,
+    task: openTodos().length,
     inbox: inboxOpen().length,
     person: peopleDue().length,
     review: reviewDue().length,
@@ -781,7 +735,7 @@ function renderNav(){
     b.onclick = () => { view=b.dataset.v; editing=null; location.hash=view; render(); });
 }
 
-const VIEWS = { home:viewHome, task:viewTasks, expiry:viewExpiry, cal:viewCal, checkin:viewCheckin,
+const VIEWS = { home:viewHome, task:viewTodo, cal:viewCal, checkin:viewCheckin,
                 xhs:viewXhs, trade:viewTrade, event:viewEvent, person:viewPerson,
                 inbox:viewInbox, review:viewReview };
 
