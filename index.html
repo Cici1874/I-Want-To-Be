@@ -72,6 +72,11 @@
 
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
         border:1px solid var(--line);color:var(--muted);}
+  /* 状态语义色：st1 进行中·黄 st2 完成·绿 st3 确定中间态·蓝 st4 对照组·红 */
+  .pill.st1{color:var(--stale);border-color:var(--stale);}
+  .pill.st2{color:var(--fresh);border-color:var(--fresh);}
+  .pill.st3{color:var(--appt);border-color:var(--appt);}
+  .pill.st4{color:var(--cold);border-color:var(--cold);}
   .num{font-variant-numeric:tabular-nums;font-weight:600;min-width:58px;}
   .fresh{color:var(--fresh);} .stale{color:var(--stale);} .cold{color:var(--cold);}
 
@@ -223,6 +228,15 @@ const SCHEMA = {
       {k:"status", label:"状态", type:"select", options:["想法","在写","已发","数据"]},
       {k:"link",   label:"链接", type:"text"},
     ]},
+  media: {
+    nav:"影音", title:"影音库", sub:"看了什么、想看什么——「弃了」也记，那是口味的边界",
+    fields:[
+      {k:"title",    label:"名称", type:"text", wide:true},
+      {k:"kind",     label:"类型", type:"select", options:["电影","纪录片","书","美剧","港剧","电视剧","动画","播客","其他"]},
+      {k:"status",   label:"状态", type:"select", options:["想看","在看","看完","弃了"]},
+      {k:"progress", label:"进度（第几季/集/页）", type:"text"},
+      {k:"note",     label:"一句想法", type:"text", wide:true},
+    ]},
   trade: {
     nav:"投资", title:"投资决策日志", sub:"不记市值，只记判断——回头才能对账",
     fields:[
@@ -282,7 +296,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let uid = null, items = [], view = "home", editing = null;
+let uid = null, items = [], view = "home", editing = null, showDigested = false;
 const LS_KEY = "lifeos_items";
 
 // ============================================================
@@ -337,10 +351,19 @@ const EN = {
   "待办 · 进入窗口的":"To-dos · in window","接下来的活动":"Coming up","支线状态":"Tracks",
   "该处理的":"Needs attention","Inbox 未消化":"Inbox pending","该联系的人":"People due","该 review 的底仓":"Reviews due",
   // 零散词
-  "明天":"Tomorrow","从没":"never","天前":"d ago",
+  "明天":"Tomorrow","从未":"never","天前":"d ago",
   "上次往来":"last contact","上次参加":"Last attended","累计参加":"Attended total",
   "宏观变量：":"Macro: ","证伪信号：":"Falsifier: ","认识了：":"Met: ",
   "最近完成":"Recently completed","排期中的预约":"Upcoming appointments",
+  // 影音库
+  "影音":"Media","影音库":"Media library",
+  "看了什么、想看什么——「弃了」也记，那是口味的边界":"What you watched, want to watch — log \u201cdropped\u201d too; that's the edge of your taste",
+  "名称":"Title","类型":"Type","进度（第几季/集/页）":"Progress (season/ep/page)","一句想法":"One thought",
+  "电影":"Film","纪录片":"Documentary","书":"Book","美剧":"US series","港剧":"HK drama",
+  "电视剧":"TV series","动画":"Animation","播客":"Podcast",
+  "想看":"Want to","在看":"Watching","看完":"Finished","弃了":"Dropped",
+  "想看什么先扔进来——弃了的也留着。":"Toss in what you want to watch — keep the dropped ones too.",
+  "还原":"Restore",
   // 打卡支线名与规则
   "髂腰肌":"Psoas","足底":"Plantar",
   "任何形式 15 分钟":"Any form · 15 min","任何形式 30 分钟":"Any form · 30 min",
@@ -381,6 +404,15 @@ const LOCALE = () => lang==="en" ? "en-AU" : "zh-CN";
 const TAGC = {"课程":"tCourse","申请":"tCareer","自驱":"tSelf"};
 const tagOf  = t => t.tag || (t.type==="expiry" ? "证件·流程" : "");
 const tagCls = t => TAGC[tagOf(t)] || "tMisc";
+
+// —— 状态 pill 分色：跨表统一语义（还没动=灰默认 / 进行中=黄 / 完成=绿 / 确定中间态=蓝 / 对照组=红） ——
+const STC = {
+  "想法":"",    "在写":"st1", "已发":"st2", "数据":"st3",
+  "观望·没买":"","减仓":"st1", "买入":"st2", "加仓":"st3",
+  "想去":"",    "已报名":"st3","已参加":"st2","没去":"st4",
+  "想看":"",    "在看":"st1", "看完":"st2", "弃了":"st4",
+};
+const stCls = s => STC[s] || "";
 
 // ============================================================
 // 2. 存储层（V0 验证过，原样保留）
@@ -572,7 +604,7 @@ function viewHome(){
     return `<div class="row">
       <span class="num ${d<=1?"stale":"fresh"}">${d===0?L("今天"):d===1?L("明天"):FMT.daysLater(d)}</span>
       <div class="main"><div class="title">${esc(e.title)}</div>
-        <div class="meta"><span class="pill">${esc(L(e.status))}</span> ${esc(e.date)}</div></div>
+        <div class="meta"><span class="pill ${stCls(e.status)}">${esc(L(e.status))}</span> ${esc(e.date)}</div></div>
     </div>`;
   }).join("");
 
@@ -589,17 +621,18 @@ function viewHome(){
   const lineChips = LINES.map(c=>{
     const n = lineIdle(c.key);
     return `<span class="chip"><b class="${tone(n,c.warn,c.cold)}">${
-      n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(c.name)}</span>`;
+      n===null?L("从未"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(c.name)}</span>`;
   }).join("");
 
   // D 类支线：最近一次「动过」距今几天（阈值来自 spec 红黄绿表）
   const lastDayOf = days => days.length ? daysSince(days.sort().at(-1)) : null;
   const xhsIdle   = lastDayOf(all("xhs").map(x=>dayKey(new Date(x.updatedAt||x.createdAt))));
+  const mediaIdle = lastDayOf(all("media").map(m=>dayKey(new Date(m.updatedAt||m.createdAt))));
   const tradeIdle = lastDayOf(all("trade").map(t=>t.date).filter(Boolean));
   const evtIdle   = lastDayOf(all("event").filter(e=>e.status==="已参加"&&e.date).map(e=>e.date));
-  const dChips = [["写作",xhsIdle,7,14],["投资",tradeIdle,30,45],["Events",evtIdle,21,45]]
+  const dChips = [["写作",xhsIdle,7,14],["影音",mediaIdle,14,30],["投资",tradeIdle,30,45],["Events",evtIdle,21,45]]
     .map(([name,n,w,c])=>`<span class="chip"><b class="${tone(n,w,c)}">${
-      n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(name)}</span>`).join("");
+      n===null?L("从未"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(name)}</span>`).join("");
 
   return `
     <h2>${L("今天")}</h2>
@@ -626,7 +659,7 @@ function viewCheckin(){
   const rows = LINES.map(c=>{
     const days = lineDays(c.key);
     const n = lineIdle(c.key), done = days.includes(today);
-    const num = n===null ? L("从没") : n===0 ? L("今天") : n;
+    const num = n===null ? L("从未") : n===0 ? L("今天") : n;
     const unit = (n===null||n===0) ? "" : `<small>${L("天前")}</small>`;
     return `<div class="lineBtn" data-line="${c.key}">
       <span class="num ${tone(n,c.warn,c.cold)}">${num}${unit}</span>
@@ -675,7 +708,7 @@ function viewXhs(){
   const order = ["数据","已发","在写","想法"];
   const arr = all("xhs").sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status) || b.createdAt-a.createdAt);
   const row = x=>`<div class="row">
-      <span class="pill">${esc(L(x.status||"想法"))}</span>
+      <span class="pill ${stCls(x.status||"想法")}">${esc(L(x.status||"想法"))}</span>
       <div class="main"><div class="title">${esc(x.title)}</div>
         ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">${L("链接")}</a></div>`:""}</div>
       <div class="acts">${editBtn(x.id)}${delBtn(x.id)}</div></div>`;
@@ -683,10 +716,23 @@ function viewXhs(){
     ${formHTML("xhs")}${list(arr,row,L("空的。刷到能写的角度就先扔一条。"))}`;
 }
 
+function viewMedia(){
+  const order = ["在看","想看","看完","弃了"];   // 在看的排最上——正在追的才是活跃仓位
+  const arr = all("media").sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status) || b.createdAt-a.createdAt);
+  const row = m=>`<div class="row">
+      <span class="pill ${stCls(m.status||"想看")}">${esc(L(m.status||"想看"))}</span>
+      <div class="main"><div class="title">${esc(m.title)} <span class="meta">${esc(L(m.kind||"其他"))}${
+        m.progress?" · "+esc(m.progress):""}</span></div>
+        ${m.note?`<div class="meta">${esc(m.note)}</div>`:""}</div>
+      <div class="acts">${editBtn(m.id)}${delBtn(m.id)}</div></div>`;
+  return `<h2>${L(SCHEMA.media.title)}</h2><p class="sub">${L(SCHEMA.media.sub)}</p>
+    ${formHTML("media")}${list(arr,row,L("想看什么先扔进来——弃了的也留着。"))}`;
+}
+
 function viewTrade(){
   const arr = all("trade").sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const row = t=>`<div class="row">
-      <span class="pill">${esc(L(t.action||""))}</span>
+      <span class="pill ${stCls(t.action||"")}">${esc(L(t.action||""))}</span>
       <div class="main">
         <div class="title">${esc(t.ticker)} <span class="meta">${esc(t.date||"")}</span></div>
         <div class="meta">${esc(t.thesis||"")}</div>
@@ -703,14 +749,14 @@ function viewEvent(){
   const gone = arr.filter(e=>e.status==="已参加");
   const idle = gone.length ? daysSince(gone[0].date) : null;
   const row = e=>`<div class="row">
-      <span class="pill">${esc(L(e.status||""))}</span>
+      <span class="pill ${stCls(e.status||"")}">${esc(L(e.status||""))}</span>
       <div class="main"><div class="title">${esc(e.title)} <span class="meta">${esc(e.date||"")}</span></div>
         ${e.met?`<div class="meta">${L("认识了：")}${esc(e.met)}</div>`:""}
         ${e.takeaway?`<div class="meta">${esc(e.takeaway)}</div>`:""}</div>
       <div class="acts">${editBtn(e.id)}${delBtn(e.id)}</div></div>`;
   return `<h2>${L(SCHEMA.event.title)}</h2><p class="sub">${L(SCHEMA.event.sub)}</p>
     <div class="chips" style="margin-bottom:16px">
-      <span class="chip">${L("上次参加")} <b class="${tone(idle,21,45)}">${idle===null?L("从没"):FMT.daysAgo(idle)}</b></span>
+      <span class="chip">${L("上次参加")} <b class="${tone(idle,21,45)}">${idle===null?L("从未"):FMT.daysAgo(idle)}</b></span>
       <span class="chip">${L("累计参加")} <b>${gone.length}</b></span></div>
     ${formHTML("event")}${list(arr,row,L("「没去」的也记——报了名没去的比去了的更说明问题。"))}`;
 }
@@ -720,7 +766,7 @@ function viewPerson(){
   const row = p=>{
     const n = daysSince(p.last), cyc = +p.cycle||60;
     return `<div class="row">
-      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</span>
+      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从未"):n===0?L("今天"):FMT.nDays(n)}</span>
       <div class="main"><div class="title">${esc(p.name)} <span class="meta">${esc(p.org||"")}</span></div>
         <div class="meta">${esc(p.channel||"")}${p.note?" · "+esc(p.note):""} · ${FMT.everyN(cyc)}</div></div>
       <div class="acts">
@@ -736,7 +782,7 @@ function viewReview(){
   const row = r=>{
     const n = daysSince(r.last), cyc = +r.cycle||30;
     return `<div class="row">
-      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</span>
+      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从未"):n===0?L("今天"):FMT.nDays(n)}</span>
       <div class="main"><div class="title">${esc(r.title)}</div>
         <div class="meta">${FMT.reviewEvery(cyc)}</div></div>
       <div class="acts">
@@ -805,7 +851,8 @@ function viewCal(){
 
 function viewInbox(){
   const arr = inboxOpen();
-  const doneN = all("note").filter(n=>n.digested).length;
+  const dig = all("note").filter(n=>n.digested)
+                .sort((a,b)=>(b.digestedAt||b.updatedAt||0)-(a.digestedAt||a.updatedAt||0));
   return `<h2>Inbox</h2><p class="sub">${L("不分类不打标签，周末再分流")}</p>
     <div class="form">
       <div class="fld wide"><label>${L("扔进来")}</label><input id="noteText" type="text"
@@ -817,14 +864,19 @@ function viewInbox(){
           <div class="meta">${new Date(n.createdAt).toLocaleDateString(LOCALE())}</div></div>
         <div class="acts"><button class="btn quiet" data-digest="${n.id}">${L("消化")}</button>
           ${delBtn(n.id)}</div></div>`, L("空的。刷到什么就扔进来。"))}
-    ${doneN?`<h3>${FMT.digested(doneN)}</h3>`:""}`;
+    ${dig.length?`<h3><button class="btn link" id="digToggle">${FMT.digested(dig.length)} ${showDigested?"▾":"▸"}</button></h3>`:""}
+    ${showDigested?dig.map(n=>`<div class="row done">
+        <div class="main"><div class="title">${esc(n.text)}</div>
+          <div class="meta">${new Date(n.createdAt).toLocaleDateString(LOCALE())} → ${new Date(n.digestedAt||n.updatedAt).toLocaleDateString(LOCALE())}</div></div>
+        <div class="acts"><button class="btn quiet" data-undigest="${n.id}">${L("还原")}</button>
+          ${delBtn(n.id)}</div></div>`).join(""):""}`;
 }
 
 // ============================================================
 // 7. 路由与绑定
 // ============================================================
 const NAV = [
-  ["home","今天"], ["task",SCHEMA.task.nav], ["cal","日历"], ["checkin","打卡"], ["-"], ["xhs",SCHEMA.xhs.nav], ["trade",SCHEMA.trade.nav],
+  ["home","今天"], ["task",SCHEMA.task.nav], ["cal","日历"], ["checkin","打卡"], ["-"], ["xhs",SCHEMA.xhs.nav], ["media",SCHEMA.media.nav], ["trade",SCHEMA.trade.nav],
   ["event",SCHEMA.event.nav], ["person",SCHEMA.person.nav], ["-"],
   ["inbox","Inbox"], ["review",SCHEMA.review.nav],
 ];
@@ -846,7 +898,7 @@ function renderNav(){
 }
 
 const VIEWS = { home:viewHome, task:viewTodo, cal:viewCal, checkin:viewCheckin,
-                xhs:viewXhs, trade:viewTrade, event:viewEvent, person:viewPerson,
+                xhs:viewXhs, media:viewMedia, trade:viewTrade, event:viewEvent, person:viewPerson,
                 inbox:viewInbox, review:viewReview };
 
 // hash 路由：index.html#inbox 直接落 Inbox——手机主屏图标用这个链接
@@ -903,9 +955,12 @@ function render(){
   // 「今天联系了」/「已 review」
   document.querySelectorAll("[data-touch]").forEach(b=> b.onclick=()=>
     put({id:b.dataset.touch, last:dayKey()}));
-  // Inbox 消化
+  // Inbox 消化 / 还原 / 已消化列表开合
+  document.querySelectorAll("[data-undigest]").forEach(b=> b.onclick=()=>
+    put({id:b.dataset.undigest, digested:false, digestedAt:null}));
+  if($("digToggle")) $("digToggle").onclick = ()=>{ showDigested=!showDigested; render(); };
   document.querySelectorAll("[data-digest]").forEach(b=> b.onclick=()=>
-    put({id:b.dataset.digest, digested:true}));
+    put({id:b.dataset.digest, digested:true, digestedAt:Date.now()}));
 
   if($("noteAdd")){
     const add = () => {
