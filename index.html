@@ -72,11 +72,12 @@
 
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
         border:1px solid var(--line);color:var(--muted);}
-  /* 状态语义色：st1 进行中·黄 st2 完成·绿 st3 确定中间态·蓝 st4 对照组·红 */
-  .pill.st1{color:var(--stale);border-color:var(--stale);}
-  .pill.st2{color:var(--fresh);border-color:var(--fresh);}
-  .pill.st3{color:var(--appt);border-color:var(--appt);}
-  .pill.st4{color:var(--cold);border-color:var(--cold);}
+  /* 状态语义色（填充+白字）：st1 进行中·黄 st2 完成·绿 st3 确定中间态·蓝 st4 对照组·红
+     黄用比 --stale 深一档的 #8F6C22，不然白字压不住；灰（还没动）保持描边——视觉上该退后 */
+  .pill.st1{background:#8F6C22;border-color:#8F6C22;color:#fff;}
+  .pill.st2{background:var(--fresh);border-color:var(--fresh);color:#fff;}
+  .pill.st3{background:var(--appt);border-color:var(--appt);color:#fff;}
+  .pill.st4{background:var(--cold);border-color:var(--cold);color:#fff;}
   .num{font-variant-numeric:tabular-nums;font-weight:600;min-width:58px;}
   .fresh{color:var(--fresh);} .stale{color:var(--stale);} .cold{color:var(--cold);}
 
