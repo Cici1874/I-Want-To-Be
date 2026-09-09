@@ -778,15 +778,30 @@ function renderNav(){
     : `<button data-v="${k}" class="${view===k?"on":""}">${label}
          ${badges[k] ? `<span class="badge">${badges[k]}</span>` : ""}</button>`).join("");
   $("nav").querySelectorAll("[data-v]").forEach(b=>
-    b.onclick = () => { view=b.dataset.v; editing=null; render(); });
+    b.onclick = () => { view=b.dataset.v; editing=null; location.hash=view; render(); });
 }
 
 const VIEWS = { home:viewHome, task:viewTasks, expiry:viewExpiry, cal:viewCal, checkin:viewCheckin,
                 xhs:viewXhs, trade:viewTrade, event:viewEvent, person:viewPerson,
                 inbox:viewInbox, review:viewReview };
 
+// hash 路由：index.html#inbox 直接落 Inbox——手机主屏图标用这个链接
+const hashView = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : null; };
+view = hashView() || view;
+window.addEventListener("hashchange", ()=>{
+  const v = hashView();
+  if(v && v!==view){ view=v; editing=null; render(); }
+});
+
+let lastView = null;
 function render(){
   if(!uid) return;
+  // 手机上打字打到一半时后台 sync 完成会触发 render，innerHTML 重建等于清空输入框。
+  // 所以渲染前把草稿和焦点存下来，渲染后还回去。
+  const nt0 = $("noteText");
+  const draft = nt0 ? nt0.value : "";
+  const hadFocus = nt0 && document.activeElement === nt0;
+  const entering = view !== lastView; lastView = view;
   renderNav();
   $("main").innerHTML = VIEWS[view]();
 
@@ -831,10 +846,13 @@ function render(){
   if($("noteAdd")){
     const add = () => {
       const t=$("noteText").value.trim(); if(!t) return;
+      $("noteText").value="";              // 先清再存：put 会触发 render，草稿恢复不能捞回已存的字
       put({id:crypto.randomUUID(), type:"note", text:t, digested:false});
     };
     $("noteAdd").onclick = add;
     $("noteText").onkeydown = e => { if(e.key==="Enter") add(); };
+    if(draft) $("noteText").value = draft;              // 还原被重渲染打断的草稿
+    if(entering || hadFocus) $("noteText").focus();     // 进页/原本在打字 → 键盘直接弹出来
   }
 }
 
