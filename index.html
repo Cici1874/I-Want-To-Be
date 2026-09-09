@@ -8,7 +8,7 @@
   :root{
     --paper:#F7F8F6; --card:#FFFFFF; --ink:#1C1F1D; --muted:#7C837C;
     --line:#E2E5E1; --fresh:#3F6B4C; --stale:#9C7A2E; --cold:#9E4F3C;
-    --appt:#46648C;
+    --appt:#46648C; --purp:#6F5B93;
     --sidebar:#22302A;
   }
   *{box-sizing:border-box;}
@@ -63,6 +63,11 @@
   .row .meta{font-size:12px;color:var(--muted);margin-top:2px;}
   .row .acts{display:flex;gap:5px;align-items:center;flex:none;}
   .done .title{text-decoration:line-through;color:var(--muted);}
+  /* 待办分色：左侧色条，按 tag。灰=视觉退后的中性类 */
+  .row.tCourse{box-shadow:inset 3px 0 0 var(--stale);padding-left:9px;}
+  .row.tCareer{box-shadow:inset 3px 0 0 var(--cold);padding-left:9px;}
+  .row.tSelf{box-shadow:inset 3px 0 0 var(--purp);padding-left:9px;}
+  .row.tMisc{box-shadow:inset 3px 0 0 var(--line);padding-left:9px;}
   .empty{color:var(--muted);font-size:13px;padding:14px 0;}
 
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
@@ -96,6 +101,9 @@
   .legend i::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--muted);}
   .legend i.appt::before{background:var(--appt);}
   .legend i.task::before{background:var(--stale);}
+  .legend i.tCareer::before{background:var(--cold);}
+  .legend i.tSelf::before{background:var(--purp);}
+  .legend i.tMisc::before{background:var(--muted);}
   .legend i.event::before{background:var(--fresh);}
   .calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
   .wd{font-size:11px;color:var(--muted);text-align:center;padding:2px 0;}
@@ -109,6 +117,9 @@
       -webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}
   .ci.appt{border-color:var(--appt);color:var(--appt);}
   .ci.task{border-color:var(--stale);color:var(--stale);}
+  .ci.tCareer{border-color:var(--cold);color:var(--cold);}
+  .ci.tSelf{border-color:var(--purp);color:var(--purp);}
+  .ci.tMisc{border-color:var(--muted);color:var(--muted);}
   .ci.event{border-color:var(--fresh);color:var(--fresh);}
   .ci.done{opacity:.55;text-decoration:line-through;}
   @media(max-width:720px){ .calCell{min-height:56px;} .calHead .legend{display:none;} }
@@ -165,6 +176,7 @@
     <button class="btn quiet" id="syncBtn">同步</button>
     <button class="btn quiet" id="exportBtn">导出 JSON</button>
     <button class="btn quiet" id="logoutBtn">退出</button>
+    <button class="btn quiet" id="langBtn">EN</button>
     <span id="status"></span>
   </footer>
 </div>
@@ -190,7 +202,7 @@ const SCHEMA = {
     nav:"待办", title:"待办", sub:"有截止日的、会过期的、等回复的——共性是有个日期在逼你动",
     fields:[
       {k:"title", label:"要做什么", type:"text", wide:true},
-      {k:"tag",   label:"分类", type:"select", options:["课程","申请","杂事","证件·流程"]},
+      {k:"tag",   label:"分类", type:"select", options:["课程","申请","自驱","杂事","证件·流程"]},
       {k:"due",   label:"截止日", type:"date"},
       {k:"lastc", label:"上次往来（等回复的填）", type:"date"},
       {k:"remind", label:"窗口（天）", type:"number", def:7},
@@ -205,7 +217,7 @@ const SCHEMA = {
       {k:"note",  label:"备注", type:"text"},
     ]},
   xhs: {
-    nav:"小红书", title:"选题库", sub:"想法 → 在写 → 已发 → 数据",
+    nav:"写作", title:"选题库", sub:"平台只是载体——想法 → 在写 → 已发 → 数据",
     fields:[
       {k:"title",  label:"选题", type:"text", wide:true},
       {k:"status", label:"状态", type:"select", options:["想法","在写","已发","数据"]},
@@ -224,7 +236,7 @@ const SCHEMA = {
   event: {
     nav:"活动", title:"Networking events", sub:"衡量的是有没有在持续认识新的人",
     fields:[
-      {k:"title",    label:"活动", type:"text", wide:true},
+      {k:"title",    label:"活动名", type:"text", wide:true},
       {k:"date",     label:"日期", type:"date"},
       {k:"status",   label:"状态", type:"select", options:["想去","已报名","已参加","没去"]},
       {k:"met",      label:"认识了谁", type:"text"},
@@ -274,6 +286,103 @@ let uid = null, items = [], view = "home", editing = null;
 const LS_KEY = "lifeos_items";
 
 // ============================================================
+// 1.5 语言层 + 待办分色
+//    只翻显示层：存储/比较永远用中文值，EN 只是渲染时查表。
+//    翻不到的词原样返回——漏翻不会崩，只会露中文。
+// ============================================================
+let lang = localStorage.getItem("lifeos_lang")==="en" ? "en" : "zh";
+
+const EN = {
+  // nav / 标题
+  "今天":"Today","待办":"To-dos","日历":"Calendar","打卡":"Check-in","写作":"Writing",
+  "投资":"Investing","活动":"Events","人脉":"People","底仓":"Holdings",
+  "预约":"Appointments","选题库":"Topics","投资决策日志":"Decision log",
+  "Networking events":"Networking events","长期底仓":"Long-term holdings",
+  // sub 文案
+  "有截止日的、会过期的、等回复的——共性是有个日期在逼你动":"Deadlines, expiries, awaiting replies — all share a date pushing you",
+  "发生在某天的事，不是截止于某天的事":"Things that happen on a day, not due on a day",
+  "平台只是载体——想法 → 在写 → 已发 → 数据":"Platform is just the vehicle — idea → drafting → published → data",
+  "不记市值，只记判断——回头才能对账":"No market values, only judgments — that's what you settle against later",
+  "衡量的是有没有在持续认识新的人":"Measures whether you keep meeting new people",
+  "红黄绿标在每个人身上，不是标在整条支线上":"Red/amber/green sits on each person, not the whole track",
+  "几周不碰正常，半年不碰就废了":"Weeks untouched is fine; six months means it's dead",
+  "——预约在这录，其它表的日期自动铺上来":" — appointments live here; dates from other tables flow in",
+  "不分类不打标签，周末再分流":"No sorting, no tags — triage on weekends",
+  "点整行 = 今天碰过了，再点取消 · 漏打的用行尾「补昨天」，康复日历近 7 天格子也能直接点":"Tap a row = touched today, tap again to undo · use \u201cFill yesterday\u201d for misses · rehab cells (last 7 days) are tappable",
+  // 字段 label
+  "要做什么":"What","分类":"Category","截止日":"Due","上次往来（等回复的填）":"Last contact (awaiting reply)",
+  "窗口（天）":"Window (days)","球在谁手上":"Ball with","事项":"Item","日期":"Date","备注":"Note",
+  "选题":"Topic","状态":"Status","链接":"Link","标的":"Ticker","动作":"Action",
+  "当时的判断":"Thesis at the time","依赖哪个宏观变量":"Macro dependency","什么信号说明我错了":"What proves me wrong",
+  "活动名":"Event","认识了谁":"Who I met","一句收获":"One takeaway",
+  "姓名":"Name","公司 / 关系":"Company / relation","怎么认识的":"How we met","上次联系":"Last contact",
+  "多久该联系一次（天）":"Contact cycle (days)","条目":"Item","多久 review 一次（天）":"Review cycle (days)",
+  "上次 review":"Last review",
+  // 下拉选项（显示层；存储值不变）
+  "课程":"Course","申请":"Application","自驱":"Self-driven","杂事":"Errand","证件·流程":"Docs & process",
+  "医疗":"Medical","练车":"Driving lesson","其他":"Other","其他待办":"Other",
+  "想法":"Idea","在写":"Drafting","已发":"Published","数据":"Data",
+  "买入":"Buy","加仓":"Add","减仓":"Trim","观望·没买":"Watch · no buy",
+  "想去":"Want to go","已报名":"Registered","已参加":"Attended","没去":"Skipped",
+  "无":"None","我":"Me","对方":"Them",
+  // 按钮 / 状态
+  "更新":"Update","添加":"Add","取消":"Cancel","编辑":"Edit","删除":"Delete",
+  "完成":"Done","撤销":"Undo","补昨天":"Fill yesterday","今天联系了":"Contacted today",
+  "已 review":"Reviewed","消化":"Digest","存":"Save","扔进来":"Drop it in",
+  "同步":"Sync","导出 JSON":"Export JSON","退出":"Sign out","登录":"Sign in",
+  "邮箱":"Email","密码":"Password","换设备登一次，数据自己回来":"Sign in once per device — data follows you",
+  "登录中…":"Signing in…","登录失败：":"Sign-in failed: ",
+  "同步中…":"Syncing…","已同步":"Synced","同步失败：":"Sync failed: ",
+  // 首页
+  "待办 · 进入窗口的":"To-dos · in window","接下来的活动":"Coming up","支线状态":"Tracks",
+  "该处理的":"Needs attention","Inbox 未消化":"Inbox pending","该联系的人":"People due","该 review 的底仓":"Reviews due",
+  // 零散词
+  "明天":"Tomorrow","从没":"never","天前":"d ago",
+  "上次往来":"last contact","上次参加":"Last attended","累计参加":"Attended total",
+  "宏观变量：":"Macro: ","证伪信号：":"Falsifier: ","认识了：":"Met: ",
+  "最近完成":"Recently completed","排期中的预约":"Upcoming appointments",
+  // 打卡支线名与规则
+  "髂腰肌":"Psoas","足底":"Plantar",
+  "任何形式 15 分钟":"Any form · 15 min","任何形式 30 分钟":"Any form · 30 min",
+  "读了任意页数":"Any number of pages","康复动作满 10 分钟":"Rehab moves · 10 min",
+  // 空状态
+  "窗口内没有该动的待办。":"Nothing in the window.",
+  "没有待办。":"No to-dos.",
+  "空的。刷到能写的角度就先扔一条。":"Empty. Toss in an angle when you spot one.",
+  "「观望·没买」也要记——那是最干净的对照组。":"Log \u201cwatch · no buy\u201d too — the cleanest control group.",
+  "「没去」的也记——报了名没去的比去了的更说明问题。":"Log \u201cskipped\u201d too — a no-show says more than attendance.",
+  "从 events 里认识的人填到这来。":"People you met at events go here.",
+  "Career 方向、作品集、app roadmap 都该在这。":"Career direction, portfolio, app roadmap belong here.",
+  "没有排期中的预约。":"No upcoming appointments.",
+  "空的。刷到什么就扔进来。":"Empty. Toss in whatever you find.",
+  "播客里的一个点、一个选题、一本想看的书…":"A podcast point, a topic idea, a book to read…",
+};
+const L = s => lang==="en" ? (EN[s] ?? s) : s;
+
+// 带数字的格式串：函数而不是查表
+const FMT = {
+  overdue:  n => lang==="en" ? `${n}d overdue` : `逾期${n}天`,
+  silent:   n => lang==="en" ? `quiet ${n}d`   : `沉默${n}天`,
+  nDays:    n => lang==="en" ? `${n}d`         : `${n}天`,
+  daysAgo:  n => lang==="en" ? `${n}d ago`     : `${n} 天前`,
+  daysLater:n => lang==="en" ? `in ${n}d`      : `${n} 天后`,
+  ball:     w => lang==="en" ? `ball: ${w}`    : `球在${w}`,
+  everyN:   n => lang==="en" ? `every ${n}d`   : `每 ${n} 天`,
+  reviewEvery: n => lang==="en" ? `review every ${n}d` : `每 ${n} 天该看一次`,
+  tenWeeks: (name,hit) => lang==="en" ? `${name} · ${hit} days in last 10 weeks` : `${name} · 近 10 周做了 ${hit} 天`,
+  digested: n => lang==="en" ? `Digested ${n}` : `已消化 ${n} 条`,
+  monthTitle: (y,m) => lang==="en"
+      ? new Date(y,m,1).toLocaleDateString("en-AU",{month:"long",year:"numeric"})
+      : `${y} 年 ${m+1} 月`,
+};
+const LOCALE = () => lang==="en" ? "en-AU" : "zh-CN";
+
+// —— 待办分色：按 tag 查色。旧 expiry 无 tag → 证件·流程 → 中性灰 ——
+const TAGC = {"课程":"tCourse","申请":"tCareer","自驱":"tSelf"};
+const tagOf  = t => t.tag || (t.type==="expiry" ? "证件·流程" : "");
+const tagCls = t => TAGC[tagOf(t)] || "tMisc";
+
+// ============================================================
 // 2. 存储层（V0 验证过，原样保留）
 // ============================================================
 const loadLocal = () => { try{ return JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch{ return []; } };
@@ -290,7 +399,7 @@ async function sync(){
   if(!uid) return;
   if(syncing){ syncQueued=true; return; }        // 已有一个在跑：记一笔，跑完补一次
   syncing=true;
-  setStatus("同步中…");
+  setStatus(L("同步中…"));
   try{
     const snap = await getDocs(collection(db,"users",uid,"items"));
     const cloud = snap.docs.map(d=>d.data());
@@ -301,8 +410,8 @@ async function sync(){
     for(const it of toPush){                     // 串行写，不并发
       await setDoc(doc(db,"users",uid,"items",it.id), it);
     }
-    setStatus("已同步","ok");
-  }catch(e){ setStatus("同步失败："+(e.code||e.message),"err"); console.error(e); }
+    setStatus(L("已同步"),"ok");
+  }catch(e){ setStatus(L("同步失败：")+(e.code||e.message),"err"); console.error(e); }
   finally{
     syncing=false;
     if(syncQueued){ syncQueued=false; sync(); }   // 同步期间又有写入 → 再跑一轮兜底
@@ -385,14 +494,14 @@ function formHTML(type){
     const v = e ? (e[f.k] ?? "") : (f.def ?? (f.type==="date" && (f.k==="date"||f.k==="last") ? dayKey() : ""));
     const inp = f.type==="select"
       ? `<select data-f="${f.k}">${f.options.map(o=>
-          `<option ${String(v)===o?"selected":""}>${o}</option>`).join("")}</select>`
+          `<option value="${o}" ${String(v)===o?"selected":""}>${L(o)}</option>`).join("")}</select>`
       : `<input data-f="${f.k}" type="${f.type}" value="${esc(v)}">`;
-    return `<div class="fld ${f.wide?"wide":""}"><label>${f.label}</label>${inp}</div>`;
+    return `<div class="fld ${f.wide?"wide":""}"><label>${L(f.label)}</label>${inp}</div>`;
   }).join("");
   return `<div class="form" id="form">
             ${fields}
-            <button class="btn" id="saveBtn">${e?"更新":"添加"}</button>
-            ${e?`<button class="btn quiet" id="cancelBtn">取消</button>`:""}
+            <button class="btn" id="saveBtn">${e?L("更新"):L("添加")}</button>
+            ${e?`<button class="btn quiet" id="cancelBtn">${L("取消")}</button>`:""}
           </div>`;
 }
 
@@ -408,8 +517,8 @@ function bindForm(type){
   if($("cancelBtn")) $("cancelBtn").onclick = () => { editing=null; render(); };
 }
 
-const editBtn = id => `<button class="btn link" data-edit="${id}">编辑</button>`;
-const delBtn  = id => `<button class="btn link" data-del="${id}">删除</button>`;
+const editBtn = id => `<button class="btn link" data-edit="${id}">${L("编辑")}</button>`;
+const delBtn  = id => `<button class="btn link" data-del="${id}">${L("删除")}</button>`;
 
 function bindRows(){
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=()=>del(b.dataset.del));
@@ -427,24 +536,24 @@ function list(arr, rowFn, emptyMsg){
 // ============================================================
 // 待办行渲染——首页和待办页共用；acts 传按钮 HTML
 function todoRow(t, acts=""){
-  const ball = t.ball&&t.ball!=="无" ? ` · 球在${esc(t.ball)}` : "";
-  const tag  = t.tag || (t.type==="expiry" ? "证件·流程" : "");   // 旧 expiry 数据没有 tag
+  const ball = t.ball&&t.ball!=="无" ? ` · ${FMT.ball(esc(L(t.ball)))}` : "";
+  const tag  = tagOf(t);
   const w = +t.remind||7;
   let num="—", cls="";
   if(t.due){
     const d = daysUntil(t.due);
     cls = t.done ? "" : d<0||d<=1 ? "cold" : d<=w ? "stale" : "fresh";
-    num = d<0 ? `逾期${-d}天` : d===0 ? "今天" : `${d}天`;
+    num = d<0 ? FMT.overdue(-d) : d===0 ? L("今天") : FMT.nDays(d);
   }else if(t.lastc){
     const n = daysSince(t.lastc);
     cls = t.done ? "" : n>=w*2 ? "cold" : n>=w ? "stale" : "fresh";
-    num = `沉默${n}天`;
+    num = FMT.silent(n);
   }
-  return `<div class="row ${t.done?"done":""}">
+  return `<div class="row ${t.done?"done":""} ${tagCls(t)}">
     <span class="num ${cls}">${num}</span>
     <div class="main"><div class="title">${esc(t.title)}</div>
-      <div class="meta"><span class="pill">${esc(tag)}</span> ${esc(t.due||"")}${
-        !t.due&&t.lastc?`上次往来 ${esc(t.lastc)}`:""}${ball}</div></div>
+      <div class="meta"><span class="pill">${esc(L(tag))}</span> ${esc(t.due||"")}${
+        !t.due&&t.lastc?`${L("上次往来")} ${esc(t.lastc)}`:""}${ball}</div></div>
     ${acts?`<div class="acts">${acts}</div>`:""}
   </div>`;
 }
@@ -454,16 +563,16 @@ function viewHome(){
   const ppl = peopleDue(), rev = reviewDue();
 
   const todoRows = list(todos,
-    t=>todoRow(t, `<button class="btn quiet" data-done="${t.id}">完成</button>`),
-    "窗口内没有该动的待办。");
+    t=>todoRow(t, `<button class="btn quiet" data-done="${t.id}">${L("完成")}</button>`),
+    L("窗口内没有该动的待办。"));
 
   const evts = upcomingEvts();
   const evtRows = evts.map(e=>{
     const d = daysUntil(e.date);
     return `<div class="row">
-      <span class="num ${d<=1?"stale":"fresh"}">${d===0?"今天":d===1?"明天":d+" 天后"}</span>
+      <span class="num ${d<=1?"stale":"fresh"}">${d===0?L("今天"):d===1?L("明天"):FMT.daysLater(d)}</span>
       <div class="main"><div class="title">${esc(e.title)}</div>
-        <div class="meta"><span class="pill">${esc(e.status)}</span> ${esc(e.date)}</div></div>
+        <div class="meta"><span class="pill">${esc(L(e.status))}</span> ${esc(e.date)}</div></div>
     </div>`;
   }).join("");
 
@@ -471,16 +580,16 @@ function viewHome(){
   const apptRows = appts.map(a=>{
     const d = daysUntil(a.date);
     return `<div class="row">
-      <span class="num ${d<=1?"stale":"fresh"}">${d===0?"今天":d===1?"明天":d+" 天后"}</span>
+      <span class="num ${d<=1?"stale":"fresh"}">${d===0?L("今天"):d===1?L("明天"):FMT.daysLater(d)}</span>
       <div class="main"><div class="title">${esc(a.title)}</div>
-        <div class="meta"><span class="pill">${esc(a.tag||"其他")}</span> ${esc(a.date)}${a.note?" · "+esc(a.note):""}</div></div>
+        <div class="meta"><span class="pill">${esc(L(a.tag||"其他"))}</span> ${esc(a.date)}${a.note?" · "+esc(a.note):""}</div></div>
     </div>`;
   }).join("");
 
   const lineChips = LINES.map(c=>{
     const n = lineIdle(c.key);
     return `<span class="chip"><b class="${tone(n,c.warn,c.cold)}">${
-      n===null?"从没":n===0?"今天":n+"天"}</b> ${c.name}</span>`;
+      n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(c.name)}</span>`;
   }).join("");
 
   // D 类支线：最近一次「动过」距今几天（阈值来自 spec 红黄绿表）
@@ -488,26 +597,26 @@ function viewHome(){
   const xhsIdle   = lastDayOf(all("xhs").map(x=>dayKey(new Date(x.updatedAt||x.createdAt))));
   const tradeIdle = lastDayOf(all("trade").map(t=>t.date).filter(Boolean));
   const evtIdle   = lastDayOf(all("event").filter(e=>e.status==="已参加"&&e.date).map(e=>e.date));
-  const dChips = [["小红书",xhsIdle,7,14],["投资",tradeIdle,30,45],["Events",evtIdle,21,45]]
+  const dChips = [["写作",xhsIdle,7,14],["投资",tradeIdle,30,45],["Events",evtIdle,21,45]]
     .map(([name,n,w,c])=>`<span class="chip"><b class="${tone(n,w,c)}">${
-      n===null?"从没":n===0?"今天":n+"天"}</b> ${name}</span>`).join("");
+      n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(name)}</span>`).join("");
 
   return `
-    <h2>今天</h2>
-    <p class="sub">${new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}</p>
+    <h2>${L("今天")}</h2>
+    <p class="sub">${new Date().toLocaleDateString(LOCALE(),{month:"long",day:"numeric",weekday:"long"})}</p>
 
-    <div class="card"><h4>待办 · 进入窗口的</h4>${todoRows}</div>
-    ${appts.length?`<div class="card"><h4>预约</h4>${apptRows}</div>`:""}
-    ${evts.length?`<div class="card"><h4>接下来的活动</h4>${evtRows}</div>`:""}
+    <div class="card"><h4>${L("待办 · 进入窗口的")}</h4>${todoRows}</div>
+    ${appts.length?`<div class="card"><h4>${L("预约")}</h4>${apptRows}</div>`:""}
+    ${evts.length?`<div class="card"><h4>${L("接下来的活动")}</h4>${evtRows}</div>`:""}
 
-    <h3>支线状态</h3>
+    <h3>${L("支线状态")}</h3>
     <div class="chips" style="margin-bottom:16px">${lineChips}${dChips}</div>
 
-    <h3>该处理的</h3>
+    <h3>${L("该处理的")}</h3>
     <div class="chips">
-      <span class="chip">Inbox 未消化 <b>${inbox.length}</b></span>
-      <span class="chip">该联系的人 <b class="${ppl.length?"stale":""}">${ppl.length}</b></span>
-      <span class="chip">该 review 的底仓 <b class="${rev.length?"stale":""}">${rev.length}</b></span>
+      <span class="chip">${L("Inbox 未消化")} <b>${inbox.length}</b></span>
+      <span class="chip">${L("该联系的人")} <b class="${ppl.length?"stale":""}">${ppl.length}</b></span>
+      <span class="chip">${L("该 review 的底仓")} <b class="${rev.length?"stale":""}">${rev.length}</b></span>
     </div>`;
 }
 
@@ -517,13 +626,13 @@ function viewCheckin(){
   const rows = LINES.map(c=>{
     const days = lineDays(c.key);
     const n = lineIdle(c.key), done = days.includes(today);
-    const num = n===null ? "从没" : n===0 ? "今天" : n;
-    const unit = (n===null||n===0) ? "" : `<small>天前</small>`;
+    const num = n===null ? L("从没") : n===0 ? L("今天") : n;
+    const unit = (n===null||n===0) ? "" : `<small>${L("天前")}</small>`;
     return `<div class="lineBtn" data-line="${c.key}">
       <span class="num ${tone(n,c.warn,c.cold)}">${num}${unit}</span>
-      <span class="main"><span class="title">${c.name}</span>
-        <div class="meta">${c.rule}</div></span>
-      ${days.includes(yd)?"":`<button class="btn link" data-fill="${c.key}">补昨天</button>`}
+      <span class="main"><span class="title">${L(c.name)}</span>
+        <div class="meta">${L(c.rule)}</div></span>
+      ${days.includes(yd)?"":`<button class="btn link" data-fill="${c.key}">${L("补昨天")}</button>`}
       <span class="mark ${done?"on":""}">${done?"✓":""}</span></div>`;
   }).join("");
 
@@ -543,10 +652,10 @@ function viewCheckin(){
       const fix = back>=0 && back<=7 ? ` canfix" data-cal="${c.key}" data-day="${k}` : "";
       cells += `<div class="cell ${cls}${k===dayKey()?" today":""}${fix}" title="${k}"></div>`;
     }
-    return `<h3>${c.name} · 近 10 周做了 ${hit} 天</h3><div class="cal">${cells}</div>`;
+    return `<h3>${FMT.tenWeeks(L(c.name),hit)}</h3><div class="cal">${cells}</div>`;
   }).join("");
 
-  return `<h2>打卡</h2><p class="sub">点整行 = 今天碰过了，再点取消 · 漏打的用行尾「补昨天」，康复日历近 7 天格子也能直接点</p>
+  return `<h2>${L("打卡")}</h2><p class="sub">${L("点整行 = 今天碰过了，再点取消 · 漏打的用行尾「补昨天」，康复日历近 7 天格子也能直接点")}</p>
           <div class="lines">${rows}</div>${cals}`;
 }
 
@@ -554,39 +663,39 @@ function viewTodo(){
   const open = openTodos();
   const done = allTodos().filter(t=>t.done)
                  .sort((a,b)=>(a.updatedAt||0)-(b.updatedAt||0)).slice(-15).reverse();
-  const acts = t => `<button class="btn quiet" data-done="${t.id}">${t.done?"撤销":"完成"}</button>
+  const acts = t => `<button class="btn quiet" data-done="${t.id}">${t.done?L("撤销"):L("完成")}</button>
         ${editBtn(t.id)}${delBtn(t.id)}`;
-  return `<h2>${SCHEMA.task.title}</h2><p class="sub">${SCHEMA.task.sub}</p>
+  return `<h2>${L(SCHEMA.task.title)}</h2><p class="sub">${L(SCHEMA.task.sub)}</p>
     ${formHTML("task")}
-    ${list(open, t=>todoRow(t, acts(t)), "没有待办。")}
-    ${done.length?`<h3>最近完成</h3>${done.map(t=>todoRow(t, acts(t))).join("")}`:""}`;
+    ${list(open, t=>todoRow(t, acts(t)), L("没有待办。"))}
+    ${done.length?`<h3>${L("最近完成")}</h3>${done.map(t=>todoRow(t, acts(t))).join("")}`:""}`;
 }
 
 function viewXhs(){
   const order = ["数据","已发","在写","想法"];
   const arr = all("xhs").sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status) || b.createdAt-a.createdAt);
   const row = x=>`<div class="row">
-      <span class="pill">${esc(x.status||"想法")}</span>
+      <span class="pill">${esc(L(x.status||"想法"))}</span>
       <div class="main"><div class="title">${esc(x.title)}</div>
-        ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">链接</a></div>`:""}</div>
+        ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">${L("链接")}</a></div>`:""}</div>
       <div class="acts">${editBtn(x.id)}${delBtn(x.id)}</div></div>`;
-  return `<h2>${SCHEMA.xhs.title}</h2><p class="sub">${SCHEMA.xhs.sub}</p>
-    ${formHTML("xhs")}${list(arr,row,"空的。刷到能写的角度就先扔一条。")}`;
+  return `<h2>${L(SCHEMA.xhs.title)}</h2><p class="sub">${L(SCHEMA.xhs.sub)}</p>
+    ${formHTML("xhs")}${list(arr,row,L("空的。刷到能写的角度就先扔一条。"))}`;
 }
 
 function viewTrade(){
   const arr = all("trade").sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const row = t=>`<div class="row">
-      <span class="pill">${esc(t.action||"")}</span>
+      <span class="pill">${esc(L(t.action||""))}</span>
       <div class="main">
         <div class="title">${esc(t.ticker)} <span class="meta">${esc(t.date||"")}</span></div>
         <div class="meta">${esc(t.thesis||"")}</div>
-        ${t.macro?`<div class="meta">宏观变量：${esc(t.macro)}</div>`:""}
-        ${t.invalid?`<div class="meta">证伪信号：${esc(t.invalid)}</div>`:""}
+        ${t.macro?`<div class="meta">${L("宏观变量：")}${esc(t.macro)}</div>`:""}
+        ${t.invalid?`<div class="meta">${L("证伪信号：")}${esc(t.invalid)}</div>`:""}
       </div>
       <div class="acts">${editBtn(t.id)}${delBtn(t.id)}</div></div>`;
-  return `<h2>${SCHEMA.trade.title}</h2><p class="sub">${SCHEMA.trade.sub}</p>
-    ${formHTML("trade")}${list(arr,row,"「观望·没买」也要记——那是最干净的对照组。")}`;
+  return `<h2>${L(SCHEMA.trade.title)}</h2><p class="sub">${L(SCHEMA.trade.sub)}</p>
+    ${formHTML("trade")}${list(arr,row,L("「观望·没买」也要记——那是最干净的对照组。"))}`;
 }
 
 function viewEvent(){
@@ -594,16 +703,16 @@ function viewEvent(){
   const gone = arr.filter(e=>e.status==="已参加");
   const idle = gone.length ? daysSince(gone[0].date) : null;
   const row = e=>`<div class="row">
-      <span class="pill">${esc(e.status||"")}</span>
+      <span class="pill">${esc(L(e.status||""))}</span>
       <div class="main"><div class="title">${esc(e.title)} <span class="meta">${esc(e.date||"")}</span></div>
-        ${e.met?`<div class="meta">认识了：${esc(e.met)}</div>`:""}
+        ${e.met?`<div class="meta">${L("认识了：")}${esc(e.met)}</div>`:""}
         ${e.takeaway?`<div class="meta">${esc(e.takeaway)}</div>`:""}</div>
       <div class="acts">${editBtn(e.id)}${delBtn(e.id)}</div></div>`;
-  return `<h2>${SCHEMA.event.title}</h2><p class="sub">${SCHEMA.event.sub}</p>
+  return `<h2>${L(SCHEMA.event.title)}</h2><p class="sub">${L(SCHEMA.event.sub)}</p>
     <div class="chips" style="margin-bottom:16px">
-      <span class="chip">上次参加 <b class="${tone(idle,21,45)}">${idle===null?"从没":idle+" 天前"}</b></span>
-      <span class="chip">累计参加 <b>${gone.length}</b></span></div>
-    ${formHTML("event")}${list(arr,row,"「没去」的也记——报了名没去的比去了的更说明问题。")}`;
+      <span class="chip">${L("上次参加")} <b class="${tone(idle,21,45)}">${idle===null?L("从没"):FMT.daysAgo(idle)}</b></span>
+      <span class="chip">${L("累计参加")} <b>${gone.length}</b></span></div>
+    ${formHTML("event")}${list(arr,row,L("「没去」的也记——报了名没去的比去了的更说明问题。"))}`;
 }
 
 function viewPerson(){
@@ -611,15 +720,15 @@ function viewPerson(){
   const row = p=>{
     const n = daysSince(p.last), cyc = +p.cycle||60;
     return `<div class="row">
-      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?"从没":n===0?"今天":n+"天"}</span>
+      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</span>
       <div class="main"><div class="title">${esc(p.name)} <span class="meta">${esc(p.org||"")}</span></div>
-        <div class="meta">${esc(p.channel||"")}${p.note?" · "+esc(p.note):""} · 每 ${cyc} 天</div></div>
+        <div class="meta">${esc(p.channel||"")}${p.note?" · "+esc(p.note):""} · ${FMT.everyN(cyc)}</div></div>
       <div class="acts">
-        <button class="btn quiet" data-touch="${p.id}">今天联系了</button>
+        <button class="btn quiet" data-touch="${p.id}">${L("今天联系了")}</button>
         ${editBtn(p.id)}${delBtn(p.id)}</div></div>`;
   };
-  return `<h2>${SCHEMA.person.title}</h2><p class="sub">${SCHEMA.person.sub}</p>
-    ${formHTML("person")}${list(arr,row,"从 events 里认识的人填到这来。")}`;
+  return `<h2>${L(SCHEMA.person.title)}</h2><p class="sub">${L(SCHEMA.person.sub)}</p>
+    ${formHTML("person")}${list(arr,row,L("从 events 里认识的人填到这来。"))}`;
 }
 
 function viewReview(){
@@ -627,15 +736,15 @@ function viewReview(){
   const row = r=>{
     const n = daysSince(r.last), cyc = +r.cycle||30;
     return `<div class="row">
-      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?"从没":n===0?"今天":n+"天"}</span>
+      <span class="num ${tone(n,cyc*0.7,cyc)}">${n===null?L("从没"):n===0?L("今天"):FMT.nDays(n)}</span>
       <div class="main"><div class="title">${esc(r.title)}</div>
-        <div class="meta">每 ${cyc} 天该看一次</div></div>
+        <div class="meta">${FMT.reviewEvery(cyc)}</div></div>
       <div class="acts">
-        <button class="btn quiet" data-touch="${r.id}">已 review</button>
+        <button class="btn quiet" data-touch="${r.id}">${L("已 review")}</button>
         ${editBtn(r.id)}${delBtn(r.id)}</div></div>`;
   };
-  return `<h2>${SCHEMA.review.title}</h2><p class="sub">${SCHEMA.review.sub}</p>
-    ${formHTML("review")}${list(arr,row,"Career 方向、作品集、app roadmap 都该在这。")}`;
+  return `<h2>${L(SCHEMA.review.title)}</h2><p class="sub">${L(SCHEMA.review.sub)}</p>
+    ${formHTML("review")}${list(arr,row,L("Career 方向、作品集、app roadmap 都该在这。"))}`;
 }
 
 let calYM = null;                                   // 当前显示的年月，翻页会改
@@ -648,8 +757,8 @@ function viewCal(){
   const byDay = {};
   const push = (day,label,cls) => { (byDay[day] ||= []).push({label,cls}); };
   all("appt").forEach(a=> a.date && push(a.date,
-      (a.tag&&a.tag!=="其他" ? a.tag+"·" : "")+a.title, "appt"));
-  allTodos().forEach(t=> t.due && push(t.due, t.title, "task"+(t.done?" done":"")));
+      (a.tag&&a.tag!=="其他" ? L(a.tag)+"·" : "")+a.title, "appt"));
+  allTodos().forEach(t=> t.due && push(t.due, t.title, "task "+tagCls(t)+(t.done?" done":"")));
   all("event").forEach(e=> e.date && push(e.date, e.title,
       "event"+(e.status==="没去"?" done":"")));      // 「没去」划掉但保留——对照组
 
@@ -667,47 +776,48 @@ function viewCal(){
     cells += `<div class="calCell ${inM?"":"dim"}${k===todayK?" now":""}">
                 <div class="cd">${d.getDate()}</div>${items}</div>`;
   }
-  const wd = ["一","二","三","四","五","六","日"].map(w=>`<div class="wd">${w}</div>`).join("");
+  const wd = (lang==="en"?["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]:["一","二","三","四","五","六","日"])
+    .map(w=>`<div class="wd">${w}</div>`).join("");
 
   // 排期中的预约列表（编辑/删除入口在这，格子太小放不下按钮）
   const up = all("appt").filter(a=>a.date && daysUntil(a.date)>=0)
                .sort((a,b)=>a.date.localeCompare(b.date));
   const upRows = list(up, a=>`<div class="row">
       <span class="num ${daysUntil(a.date)<=1?"stale":"fresh"}">${
-        daysUntil(a.date)===0?"今天":daysUntil(a.date)===1?"明天":daysUntil(a.date)+" 天后"}</span>
+        daysUntil(a.date)===0?L("今天"):daysUntil(a.date)===1?L("明天"):FMT.daysLater(daysUntil(a.date))}</span>
       <div class="main"><div class="title">${esc(a.title)}</div>
-        <div class="meta"><span class="pill">${esc(a.tag||"其他")}</span> ${esc(a.date)}${
+        <div class="meta"><span class="pill">${esc(L(a.tag||"其他"))}</span> ${esc(a.date)}${
           a.note?" · "+esc(a.note):""}</div></div>
       <div class="acts">${editBtn(a.id)}${delBtn(a.id)}</div></div>`,
-    "没有排期中的预约。");
+    L("没有排期中的预约。"));
 
-  return `<h2>日历</h2><p class="sub">${SCHEMA.appt.sub}——预约在这录，其它表的日期自动铺上来</p>
+  return `<h2>${L("日历")}</h2><p class="sub">${L(SCHEMA.appt.sub)}${L("——预约在这录，其它表的日期自动铺上来")}</p>
     ${formHTML("appt")}
     <div class="calHead">
       <button class="btn quiet" id="calPrev">‹</button>
-      <b>${y} 年 ${m+1} 月</b>
+      <b>${FMT.monthTitle(y,m)}</b>
       <button class="btn quiet" id="calNext">›</button>
-      <span class="legend"><i class="appt">预约</i><i class="task">待办</i><i class="event">活动</i></span>
+      <span class="legend"><i class="appt">${L("预约")}</i><i class="task">${L("课程")}</i><i class="tCareer">${L("申请")}</i><i class="tSelf">${L("自驱")}</i><i class="tMisc">${L("其他待办")}</i><i class="event">${L("活动")}</i></span>
     </div>
     <div class="calGrid">${wd}${cells}</div>
-    <h3>排期中的预约</h3>${upRows}`;
+    <h3>${L("排期中的预约")}</h3>${upRows}`;
 }
 
 function viewInbox(){
   const arr = inboxOpen();
   const doneN = all("note").filter(n=>n.digested).length;
-  return `<h2>Inbox</h2><p class="sub">不分类不打标签，周末再分流</p>
+  return `<h2>Inbox</h2><p class="sub">${L("不分类不打标签，周末再分流")}</p>
     <div class="form">
-      <div class="fld wide"><label>扔进来</label><input id="noteText" type="text"
-        placeholder="播客里的一个点、一个选题、一本想看的书…"></div>
-      <button class="btn" id="noteAdd">存</button>
+      <div class="fld wide"><label>${L("扔进来")}</label><input id="noteText" type="text"
+        placeholder="${L("播客里的一个点、一个选题、一本想看的书…")}"></div>
+      <button class="btn" id="noteAdd">${L("存")}</button>
     </div>
     ${list(arr, n=>`<div class="row">
         <div class="main"><div class="title">${esc(n.text)}</div>
-          <div class="meta">${new Date(n.createdAt).toLocaleDateString("zh-CN")}</div></div>
-        <div class="acts"><button class="btn quiet" data-digest="${n.id}">消化</button>
-          ${delBtn(n.id)}</div></div>`, "空的。刷到什么就扔进来。")}
-    ${doneN?`<h3>已消化 ${doneN} 条</h3>`:""}`;
+          <div class="meta">${new Date(n.createdAt).toLocaleDateString(LOCALE())}</div></div>
+        <div class="acts"><button class="btn quiet" data-digest="${n.id}">${L("消化")}</button>
+          ${delBtn(n.id)}</div></div>`, L("空的。刷到什么就扔进来。"))}
+    ${doneN?`<h3>${FMT.digested(doneN)}</h3>`:""}`;
 }
 
 // ============================================================
@@ -729,7 +839,7 @@ function renderNav(){
   };
   $("nav").innerHTML = `<div class="brand">Life OS</div>` + NAV.map(([k,label])=>
     k==="-" ? `<div class="sep"></div>`
-    : `<button data-v="${k}" class="${view===k?"on":""}">${label}
+    : `<button data-v="${k}" class="${view===k?"on":""}">${L(label)}
          ${badges[k] ? `<span class="badge">${badges[k]}</span>` : ""}</button>`).join("");
   $("nav").querySelectorAll("[data-v]").forEach(b=>
     b.onclick = () => { view=b.dataset.v; editing=null; location.hash=view; render(); });
@@ -814,9 +924,9 @@ function render(){
 // 8. 登录与启动
 // ============================================================
 $("loginBtn").onclick = async () => {
-  $("loginMsg").textContent="登录中…";
+  $("loginMsg").textContent=L("登录中…");
   try{ await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value); }
-  catch(e){ $("loginMsg").textContent="登录失败："+e.code; }
+  catch(e){ $("loginMsg").textContent=L("登录失败：")+e.code; }
 };
 $("logoutBtn").onclick = () => signOut(auth);
 $("syncBtn").onclick = sync;
@@ -827,6 +937,26 @@ $("exportBtn").onclick = () => {
   a.download = `lifeos-${dayKey()}.json`;
   a.click();
 };
+
+// —— 语言切换：只翻显示层；chrome（footer/登录页）是静态 HTML，单独刷 ——
+function applyChrome(){
+  $("langBtn").textContent = lang==="en" ? "中文" : "EN";
+  $("syncBtn").textContent = L("同步");
+  $("exportBtn").textContent = L("导出 JSON");
+  $("logoutBtn").textContent = L("退出");
+  $("loginBtn").textContent = L("登录");
+  $("email").placeholder = L("邮箱");
+  $("password").placeholder = L("密码");
+  document.querySelector("#loginView .sub").textContent = L("换设备登一次，数据自己回来");
+  document.documentElement.lang = lang==="en" ? "en" : "zh-CN";
+}
+$("langBtn").onclick = () => {
+  lang = lang==="en" ? "zh" : "en";
+  localStorage.setItem("lifeos_lang", lang);
+  applyChrome();
+  if(uid) render();
+};
+applyChrome();
 
 onAuthStateChanged(auth, async user => {
   if(user){
