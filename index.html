@@ -101,18 +101,18 @@
   .calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
   .wd{font-size:11px;color:var(--muted);text-align:center;padding:2px 0;}
   .calCell{background:var(--card);border:1px solid var(--line);border-radius:6px;
-           min-height:76px;padding:4px 5px;overflow:hidden;}
+           min-height:76px;padding:4px 5px;}
   .calCell.dim{opacity:.4;}
   .calCell.now{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);}
   .cd{font-size:11px;color:var(--muted);margin-bottom:2px;}
-  .ci{font-size:10.5px;line-height:1.4;white-space:nowrap;overflow:hidden;
-      text-overflow:ellipsis;border-left:2.5px solid;padding-left:4px;margin-bottom:2px;}
+  .ci{font-size:10.5px;line-height:1.4;border-left:2.5px solid;padding-left:4px;
+      margin-bottom:2px;overflow:hidden;display:-webkit-box;
+      -webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}
   .ci.appt{border-color:var(--appt);color:var(--appt);}
   .ci.task{border-color:var(--stale);color:var(--stale);}
   .ci.expiry{border-color:var(--cold);color:var(--cold);}
   .ci.event{border-color:var(--fresh);color:var(--fresh);}
   .ci.done{opacity:.55;text-decoration:line-through;}
-  .ci.more{color:var(--muted);border:0;padding-left:0;}
   @media(max-width:720px){ .calCell{min-height:56px;} .calHead .legend{display:none;} }
 
   /* ---------- 首页 ---------- */
@@ -706,9 +706,8 @@ function viewCal(){
     const d = new Date(start); d.setDate(start.getDate()+i);
     const k = dayKey(d), inM = d.getMonth()===m;
     const es = byDay[k]||[];
-    const items = es.slice(0,3).map(it=>
-        `<div class="ci ${it.cls}" title="${esc(it.label)}">${esc(it.label)}</div>`).join("")
-      + (es.length>3 ? `<div class="ci more">+${es.length-3}</div>` : "");
+    const items = es.map(it=>
+        `<div class="ci ${it.cls}" title="${esc(it.label)}">${esc(it.label)}</div>`).join("");
     cells += `<div class="calCell ${inM?"":"dim"}${k===todayK?" now":""}">
                 <div class="cd">${d.getDate()}</div>${items}</div>`;
   }
