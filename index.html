@@ -226,6 +226,7 @@ const SCHEMA = {
     nav:"写作", title:"选题库", sub:"平台只是载体——想法 → 在写 → 已发 → 数据",
     fields:[
       {k:"title",  label:"选题", type:"text", wide:true},
+      {k:"cat",    label:"分类", type:"combo"},
       {k:"status", label:"状态", type:"select", options:["想法","在写","已发","数据"]},
       {k:"link",   label:"链接", type:"text"},
     ]},
@@ -528,6 +529,12 @@ function formHTML(type){
     const inp = f.type==="select"
       ? `<select data-f="${f.k}">${f.options.map(o=>
           `<option value="${o}" ${String(v)===o?"selected":""}>${L(o)}</option>`).join("")}</select>`
+      : f.type==="combo"
+      // 自由文本 + 本表已用过的值做候选：分类从使用里长出来，不用管理
+      ? `<input data-f="${f.k}" type="text" value="${esc(v)}" list="dl_${type}_${f.k}">
+         <datalist id="dl_${type}_${f.k}">${
+           [...new Set(all(type).map(x=>x[f.k]).filter(Boolean))].sort()
+             .map(o=>`<option value="${esc(o)}">`).join("")}</datalist>`
       : `<input data-f="${f.k}" type="${f.type}" value="${esc(v)}">`;
     return `<div class="fld ${f.wide?"wide":""}"><label>${L(f.label)}</label>${inp}</div>`;
   }).join("");
@@ -710,6 +717,7 @@ function viewXhs(){
   const arr = all("xhs").sort((a,b)=>order.indexOf(a.status)-order.indexOf(b.status) || b.createdAt-a.createdAt);
   const row = x=>`<div class="row">
       <span class="pill ${stCls(x.status||"想法")}">${esc(L(x.status||"想法"))}</span>
+      ${x.cat?`<span class="pill">${esc(x.cat)}</span>`:""}
       <div class="main"><div class="title">${esc(x.title)}</div>
         ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">${L("链接")}</a></div>`:""}</div>
       <div class="acts">${editBtn(x.id)}${delBtn(x.id)}</div></div>`;
