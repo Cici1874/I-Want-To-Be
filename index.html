@@ -731,7 +731,11 @@ function viewCheckin(){
 function viewTodo(){
   const open = openTodos();
   const done = allTodos().filter(t=>t.done)
-                 .sort((a,b)=>(a.updatedAt||0)-(b.updatedAt||0)).slice(-15).reverse();
+                 .sort((a,b)=>{
+                   // doneDay 优先：完成后再改标题不会被顶到最上面；旧数据退回 updatedAt
+                   const k = t => t.doneDay ? new Date(t.doneDay+"T12:00").getTime() : (t.updatedAt||0);
+                   return k(a)-k(b);
+                 }).slice(-15).reverse();
   const acts = t => `<button class="btn quiet" data-done="${t.id}">${t.done?L("撤销"):L("完成")}</button>
         ${editBtn(t.id)}${delBtn(t.id)}`;
   return `<h2>${L(SCHEMA.task.title)}</h2><p class="sub">${L(SCHEMA.task.sub)}</p>
@@ -844,7 +848,13 @@ function viewCal(){
   const push = (day,label,cls) => { (byDay[day] ||= []).push({label,cls}); };
   all("appt").forEach(a=> a.date && push(a.date,
       (a.tag&&a.tag!=="其他" ? L(a.tag)+"·" : "")+a.title, "appt"));
-  allTodos().forEach(t=> t.due && push(t.due, t.title, "task "+tagCls(t)+(t.done?" done":"")));
+  allTodos().forEach(t=>{
+    // 已完成落实际完成日（doneDay）；旧数据没有 doneDay 就留在 due 格，不拿 updatedAt 猜
+    const day = t.done ? (t.doneDay || t.due) : t.due;
+    if(day) push(day, t.title, "task "+tagCls(t)+(t.done?" done":""));
+    // 完成的子任务各落各的完成日，色条继承父任务 tag
+    (t.subs||[]).forEach(s=>{ if(s.done && s.doneDay) push(s.doneDay, s.t, "task "+tagCls(t)+" done"); });
+  });
   all("event").forEach(e=> e.date && push(e.date, e.title,
       "event"+(e.status==="没去"?" done":"")));      // 「没去」划掉但保留——对照组
 
@@ -993,7 +1003,8 @@ function render(){
   });
   // 任务完成 / 撤销
   document.querySelectorAll("[data-done]").forEach(b=> b.onclick=()=>{
-    const t=items.find(i=>i.id===b.dataset.done); put({id:t.id, done:!t.done});
+    const t=items.find(i=>i.id===b.dataset.done);
+    put({id:t.id, done:!t.done, doneDay: !t.done ? dayKey() : null});
   });
   // 「今天联系了」/「已 review」
   document.querySelectorAll("[data-touch]").forEach(b=> b.onclick=()=>
@@ -1002,7 +1013,8 @@ function render(){
   const subRef = v => { const p=v.lastIndexOf("|"); return [v.slice(0,p), +v.slice(p+1)]; };
   document.querySelectorAll("[data-subtoggle]").forEach(el=> el.onclick=()=>{
     const [id,i] = subRef(el.dataset.subtoggle), x = items.find(o=>o.id===id);
-    put({id, subs: x.subs.map((s,k)=> k===i ? {...s, done:!s.done} : s)});
+    put({id, subs: x.subs.map((s,k)=> k===i
+      ? {...s, done:!s.done, doneDay: !s.done ? dayKey() : null} : s)});
   });
   document.querySelectorAll("[data-subdel]").forEach(el=> el.onclick=e=>{
     e.stopPropagation();
