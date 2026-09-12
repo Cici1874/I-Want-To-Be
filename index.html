@@ -78,6 +78,23 @@
   .pill.st2{background:var(--fresh);border-color:var(--fresh);color:#fff;}
   .pill.st3{background:var(--appt);border-color:var(--appt);color:#fff;}
   .pill.st4{background:var(--cold);border-color:var(--cold);color:#fff;}
+  /* 分类管理条 */
+  .catbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 12px;}
+  .catbar input{padding:5px 9px;border:1px solid var(--line);border-radius:8px;
+        background:var(--card);width:110px;font-size:13px;}
+  .catbar .pill a{cursor:pointer;margin-left:5px;color:var(--muted);}
+  .catbar .pill a:hover{color:var(--cold);}
+  /* 子任务 */
+  .subs{margin-top:5px;}
+  .sub-item{font-size:12.5px;padding:2px 0;cursor:pointer;display:flex;align-items:center;gap:7px;}
+  .sub-item .ck{width:14px;height:14px;border:1px solid var(--line);border-radius:4px;flex:none;
+        font-size:10px;line-height:13px;text-align:center;color:var(--fresh);background:var(--card);}
+  .sub-item.sdone .st{color:var(--muted);text-decoration:line-through;}
+  .sub-item .sx{margin-left:6px;color:var(--muted);opacity:.45;padding:0 4px;}
+  .sub-item:hover .sx{opacity:1;}
+  .sub-add{font-size:12px;color:var(--muted);cursor:pointer;display:inline-block;margin-top:3px;}
+  .sub-in{display:block;margin-top:5px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;
+        font-size:12.5px;width:min(340px,100%);background:var(--card);}
   .num{font-variant-numeric:tabular-nums;font-weight:600;min-width:58px;}
   .fresh{color:var(--fresh);} .stale{color:var(--stale);} .cold{color:var(--cold);}
 
@@ -226,7 +243,7 @@ const SCHEMA = {
     nav:"写作", title:"选题库", sub:"平台只是载体——想法 → 在写 → 已发 → 数据",
     fields:[
       {k:"title",  label:"选题", type:"text", wide:true},
-      {k:"cat",    label:"分类", type:"combo"},
+      {k:"cat",    label:"分类", type:"cats"},
       {k:"status", label:"状态", type:"select", options:["想法","在写","已发","数据"]},
       {k:"link",   label:"链接", type:"text"},
     ]},
@@ -298,7 +315,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let uid = null, items = [], view = "home", editing = null, showDigested = false;
+let uid = null, items = [], view = "home", editing = null, showDigested = false, subAdding = null;
 const LS_KEY = "lifeos_items";
 
 // ============================================================
@@ -365,7 +382,7 @@ const EN = {
   "电视剧":"TV series","动画":"Animation","播客":"Podcast",
   "想看":"Want to","在看":"Watching","看完":"Finished","弃了":"Dropped",
   "想看什么先扔进来——弃了的也留着。":"Toss in what you want to watch — keep the dropped ones too.",
-  "还原":"Restore",
+  "还原":"Restore","新分类":"New category","子任务":"sub-task","回车保存":"Enter to save",
   // 打卡支线名与规则
   "髂腰肌":"Psoas","足底":"Plantar",
   "任何形式 15 分钟":"Any form · 15 min","任何形式 30 分钟":"Any form · 30 min",
@@ -478,6 +495,10 @@ const daysSince = k => k ? diffDays(toDate(k), toDate(dayKey())) : null;   // �
 // ============================================================
 const all = t => items.filter(i=>i.type===t && !i.deleted);
 
+// —— 自定义分类列表：单条 cfg 记录存 Firestore，跟着账号走 ——
+const catsId  = type => `cfg_cats_${type}`;
+const getCats = type => { const c = items.find(i=>i.id===catsId(type)); return (c && !c.deleted && c.list) || []; };
+
 // 待办 = task + expiry 两种 type 一起读（合并页，历史数据零迁移，新录入统一写 task）
 const allTodos  = () => [...all("task"), ...all("expiry")];
 const openTodos = () => allTodos().filter(t=>!t.done)
@@ -529,12 +550,12 @@ function formHTML(type){
     const inp = f.type==="select"
       ? `<select data-f="${f.k}">${f.options.map(o=>
           `<option value="${o}" ${String(v)===o?"selected":""}>${L(o)}</option>`).join("")}</select>`
-      : f.type==="combo"
-      // 自由文本 + 本表已用过的值做候选：分类从使用里长出来，不用管理
-      ? `<input data-f="${f.k}" type="text" value="${esc(v)}" list="dl_${type}_${f.k}">
-         <datalist id="dl_${type}_${f.k}">${
-           [...new Set(all(type).map(x=>x[f.k]).filter(Boolean))].sort()
-             .map(o=>`<option value="${esc(o)}">`).join("")}</datalist>`
+      : f.type==="cats"
+      // 下拉选自定义分类；正在编辑的条目若带着已被删掉的旧分类，临时补进选项，编辑不会静默丢值
+      ? (()=>{ const cs = getCats(type);
+          const opts = v && !cs.includes(v) ? [v, ...cs] : cs;
+          return `<select data-f="${f.k}"><option value="">—</option>${opts.map(o=>
+            `<option value="${esc(o)}" ${v===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`; })()
       : `<input data-f="${f.k}" type="${f.type}" value="${esc(v)}">`;
     return `<div class="fld ${f.wide?"wide":""}"><label>${L(f.label)}</label>${inp}</div>`;
   }).join("");
@@ -589,11 +610,18 @@ function todoRow(t, acts=""){
     cls = t.done ? "" : n>=w*2 ? "cold" : n>=w ? "stale" : "fresh";
     num = FMT.silent(n);
   }
+  const subs = t.subs&&t.subs.length ? `<div class="subs">${t.subs.map((s,i)=>
+      `<div class="sub-item ${s.done?"sdone":""}" data-subtoggle="${t.id}|${i}">
+        <span class="ck">${s.done?"✓":""}</span><span class="st">${esc(s.t)}</span>
+        <a class="sx" data-subdel="${t.id}|${i}">×</a></div>`).join("")}</div>` : "";
+  const addUi = t.done ? "" : subAdding===t.id
+      ? `<input class="sub-in" id="subText" placeholder="${L("回车保存")}">`
+      : `<a class="sub-add" data-subopen="${t.id}">＋ ${L("子任务")}</a>`;
   return `<div class="row ${t.done?"done":""} ${tagCls(t)}">
     <span class="num ${cls}">${num}</span>
     <div class="main"><div class="title">${esc(t.title)}</div>
       <div class="meta"><span class="pill">${esc(L(tag))}</span> ${esc(t.due||"")}${
-        !t.due&&t.lastc?`${L("上次往来")} ${esc(t.lastc)}`:""}${ball}</div></div>
+        !t.due&&t.lastc?`${L("上次往来")} ${esc(t.lastc)}`:""}${ball}</div>${subs}${addUi}</div>
     ${acts?`<div class="acts">${acts}</div>`:""}
   </div>`;
 }
@@ -722,6 +750,9 @@ function viewXhs(){
         ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">${L("链接")}</a></div>`:""}</div>
       <div class="acts">${editBtn(x.id)}${delBtn(x.id)}</div></div>`;
   return `<h2>${L(SCHEMA.xhs.title)}</h2><p class="sub">${L(SCHEMA.xhs.sub)}</p>
+    <div class="catbar"><span class="meta">${L("分类")}</span>${
+      getCats("xhs").map(c=>`<span class="pill">${esc(c)}<a data-delcat="${esc(c)}">×</a></span>`).join("")
+    }<input id="newCat" type="text" placeholder="${L("新分类")}"><button class="btn quiet" id="addCat">${L("添加")}</button></div>
     ${formHTML("xhs")}${list(arr,row,L("空的。刷到能写的角度就先扔一条。"))}`;
 }
 
@@ -926,6 +957,9 @@ function render(){
   const nt0 = $("noteText");
   const draft = nt0 ? nt0.value : "";
   const hadFocus = nt0 && document.activeElement === nt0;
+  const st0 = $("subText");
+  const subDraft = st0 ? st0.value : "";
+  const subFocus = st0 && document.activeElement === st0;
   const entering = view !== lastView; lastView = view;
   renderNav();
   $("main").innerHTML = VIEWS[view]();
@@ -964,10 +998,54 @@ function render(){
   // 「今天联系了」/「已 review」
   document.querySelectorAll("[data-touch]").forEach(b=> b.onclick=()=>
     put({id:b.dataset.touch, last:dayKey()}));
+  // 子任务：整行点 = 勾选，× = 删除，＋ = 展开输入框（Enter 存并连续录入，Esc 收起）
+  const subRef = v => { const p=v.lastIndexOf("|"); return [v.slice(0,p), +v.slice(p+1)]; };
+  document.querySelectorAll("[data-subtoggle]").forEach(el=> el.onclick=()=>{
+    const [id,i] = subRef(el.dataset.subtoggle), x = items.find(o=>o.id===id);
+    put({id, subs: x.subs.map((s,k)=> k===i ? {...s, done:!s.done} : s)});
+  });
+  document.querySelectorAll("[data-subdel]").forEach(el=> el.onclick=e=>{
+    e.stopPropagation();
+    const [id,i] = subRef(el.dataset.subdel), x = items.find(o=>o.id===id);
+    put({id, subs: x.subs.filter((_,k)=>k!==i)});
+  });
+  document.querySelectorAll("[data-subopen]").forEach(el=> el.onclick=()=>{
+    subAdding = el.dataset.subopen; render();
+    if($("subText")) $("subText").focus();
+  });
+  if($("subText")){
+    const inp = $("subText");
+    inp.onkeydown = e => {
+      if(e.key==="Enter"){
+        const v = inp.value.trim(); if(!v) return;
+        const x = items.find(o=>o.id===subAdding);
+        inp.value = "";                                   // 先清再存，同 Inbox
+        put({id:subAdding, subs:[...(x.subs||[]), {t:v, done:false}]});
+        if($("subText")) $("subText").focus();            // put→render 重建后接着打下一条
+      }
+      if(e.key==="Escape"){ subAdding = null; render(); }
+    };
+    inp.onblur = () => {                                  // 点别处且没打字 → 收起
+      if(!document.contains(inp)) return;
+      if(!inp.value.trim()){ subAdding = null; render(); }
+    };
+  }
+  if(subDraft && $("subText")) $("subText").value = subDraft;   // 还原被后台 sync 打断的草稿
+  if(subFocus && $("subText")) $("subText").focus();
   // Inbox 消化 / 还原 / 已消化列表开合
   document.querySelectorAll("[data-undigest]").forEach(b=> b.onclick=()=>
     put({id:b.dataset.undigest, digested:false, digestedAt:null}));
   if($("digToggle")) $("digToggle").onclick = ()=>{ showDigested=!showDigested; render(); };
+  // 选题库分类管理（put 自带 render，加删完列表立即刷新）
+  if($("addCat")) $("addCat").onclick = ()=>{
+    const v = $("newCat").value.trim();
+    if(!v) return;
+    const cs = getCats("xhs");
+    if(cs.includes(v)) { $("newCat").value=""; return; }
+    put({id:catsId("xhs"), type:"cfg", list:[...cs, v]});
+  };
+  document.querySelectorAll("[data-delcat]").forEach(a=> a.onclick=()=>
+    put({id:catsId("xhs"), type:"cfg", list:getCats("xhs").filter(c=>c!==a.dataset.delcat)}));
   document.querySelectorAll("[data-digest]").forEach(b=> b.onclick=()=>
     put({id:b.dataset.digest, digested:true, digestedAt:Date.now()}));
 
