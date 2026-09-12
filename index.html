@@ -95,6 +95,7 @@
   .sub-add{font-size:12px;color:var(--muted);cursor:pointer;display:inline-block;margin-top:3px;}
   .sub-in{display:block;margin-top:5px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;
         font-size:12.5px;width:min(340px,100%);background:var(--card);}
+  .sub-in.qt{width:100%;margin-top:9px;}
   .num{font-variant-numeric:tabular-nums;font-weight:600;min-width:58px;}
   .fresh{color:var(--fresh);} .stale{color:var(--stale);} .cold{color:var(--cold);}
 
@@ -382,7 +383,7 @@ const EN = {
   "电视剧":"TV series","动画":"Animation","播客":"Podcast",
   "想看":"Want to","在看":"Watching","看完":"Finished","弃了":"Dropped",
   "想看什么先扔进来——弃了的也留着。":"Toss in what you want to watch — keep the dropped ones too.",
-  "还原":"Restore","新分类":"New category","子任务":"sub-task","回车保存":"Enter to save",
+  "还原":"Restore","新分类":"New category","子任务":"sub-task","回车保存":"Enter to save","临时任务，回车即存":"Quick task — Enter saves",
   // 打卡支线名与规则
   "髂腰肌":"Psoas","足底":"Plantar",
   "任何形式 15 分钟":"Any form · 15 min","任何形式 30 分钟":"Any form · 30 min",
@@ -674,7 +675,8 @@ function viewHome(){
     <h2>${L("今天")}</h2>
     <p class="sub">${new Date().toLocaleDateString(LOCALE(),{month:"long",day:"numeric",weekday:"long"})}</p>
 
-    <div class="card"><h4>${L("待办 · 进入窗口的")}</h4>${todoRows}</div>
+    <div class="card"><h4>${L("待办 · 进入窗口的")}</h4>${todoRows}
+      <input class="sub-in qt" id="qtText" placeholder="${L("临时任务，回车即存")}"></div>
     ${appts.length?`<div class="card"><h4>${L("预约")}</h4>${apptRows}</div>`:""}
     ${evts.length?`<div class="card"><h4>${L("接下来的活动")}</h4>${evtRows}</div>`:""}
 
@@ -970,6 +972,9 @@ function render(){
   const st0 = $("subText");
   const subDraft = st0 ? st0.value : "";
   const subFocus = st0 && document.activeElement === st0;
+  const qt0 = $("qtText");
+  const qtDraft = qt0 ? qt0.value : "";
+  const qtFocus = qt0 && document.activeElement === qt0;
   const entering = view !== lastView; lastView = view;
   renderNav();
   $("main").innerHTML = VIEWS[view]();
@@ -1009,6 +1014,19 @@ function render(){
   // 「今天联系了」/「已 review」
   document.querySelectorAll("[data-touch]").forEach(b=> b.onclick=()=>
     put({id:b.dataset.touch, last:dayKey()}));
+  // 首页临时任务：Enter 即建 due=今天的杂事任务，进窗口卡 + 今天日历格；完成后走 doneDay
+  if($("qtText")){
+    const q = $("qtText");
+    q.onkeydown = e => {
+      if(e.key!=="Enter") return;
+      const v = q.value.trim(); if(!v) return;
+      q.value = "";
+      put({id:crypto.randomUUID(), type:"task", title:v, tag:"杂事", due:dayKey(), remind:7});
+      if($("qtText")) $("qtText").focus();
+    };
+  }
+  if(qtDraft && $("qtText")) $("qtText").value = qtDraft;
+  if(qtFocus && $("qtText")) $("qtText").focus();
   // 子任务：整行点 = 勾选，× = 删除，＋ = 展开输入框（Enter 存并连续录入，Esc 收起）
   const subRef = v => { const p=v.lastIndexOf("|"); return [v.slice(0,p), +v.slice(p+1)]; };
   document.querySelectorAll("[data-subtoggle]").forEach(el=> el.onclick=()=>{
