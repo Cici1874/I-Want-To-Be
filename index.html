@@ -68,6 +68,15 @@
   .row.tCareer{box-shadow:inset 3px 0 0 var(--cold);padding-left:9px;}
   .row.tSelf{box-shadow:inset 3px 0 0 var(--purp);padding-left:9px;}
   .row.tMisc{box-shadow:inset 3px 0 0 var(--line);padding-left:9px;}
+  /* 日总结流水行：虚线左条呼应日历语义；.dl 排在 tag 规则后，box-shadow:none 才能盖掉 */
+  .row.dl{box-shadow:none;border-left:3px dashed var(--line);padding-left:9px;}
+  .row.dl.tCourse{border-left-color:var(--stale);}
+  .row.dl.tCareer{border-left-color:var(--cold);}
+  .row.dl.tSelf{border-left-color:var(--purp);}
+  .dl-in{display:flex;gap:6px;margin-top:9px;align-items:center;}
+  .dl-in .sub-in{margin-top:0;flex:1;width:auto;}
+  .dl-sel{padding:4px 6px;border:1px solid var(--line);border-radius:6px;
+        background:var(--card);font-size:12px;max-width:160px;color:var(--muted);}
   .empty{color:var(--muted);font-size:13px;padding:14px 0;}
 
   .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
@@ -129,6 +138,7 @@
   .legend i.tSelf::before{background:var(--purp);}
   .legend i.tMisc::before{background:var(--muted);}
   .legend i.event::before{background:var(--fresh);}
+  .legend i.dlog::before{background:transparent;border:1.2px dashed var(--muted);}
   .calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
   .wd{font-size:11px;color:var(--muted);text-align:center;padding:2px 0;}
   .calCell{background:var(--card);border:1px solid var(--line);border-radius:6px;
@@ -146,6 +156,8 @@
   .ci.tMisc{border-color:var(--muted);color:var(--muted);}
   .ci.event{border-color:var(--fresh);color:var(--fresh);}
   .ci.done{opacity:.55;text-decoration:line-through;}
+  /* 日总结流水：虚线=过程（碰过没完成），跟实线的「完成」区分开 */
+  .ci.dlog{border-left-style:dashed;opacity:.72;}
   @media(max-width:720px){ .calCell{min-height:56px;} .calHead .legend{display:none;} }
 
   /* ---------- 首页 ---------- */
@@ -317,6 +329,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 let uid = null, items = [], view = "home", editing = null, showDigested = false, subAdding = null;
+let dlogOpts = [];   // 日总结流水的挂任务下拉选项，viewHome 重建，value 存下标
 const LS_KEY = "lifeos_items";
 
 // ============================================================
@@ -383,7 +396,9 @@ const EN = {
   "电视剧":"TV series","动画":"Animation","播客":"Podcast",
   "想看":"Want to","在看":"Watching","看完":"Finished","弃了":"Dropped",
   "想看什么先扔进来——弃了的也留着。":"Toss in what you want to watch — keep the dropped ones too.",
-  "还原":"Restore","新分类":"New category","子任务":"sub-task","回车保存":"Enter to save","临时任务，回车即存":"Quick task — Enter saves",
+  "还原":"Restore","今天动了什么":"What moved today",
+  "做了但没做完的，回车记一笔":"Touched but unfinished — Enter to log",
+  "不挂任务":"No task","过程":"Touched","新分类":"New category","子任务":"sub-task","回车保存":"Enter to save","临时任务，回车即存":"Quick task — Enter saves",
   // 打卡支线名与规则
   "髂腰肌":"Psoas","足底":"Plantar",
   "任何形式 15 分钟":"Any form · 15 min","任何形式 30 分钟":"Any form · 30 min",
@@ -671,12 +686,33 @@ function viewHome(){
     .map(([name,n,w,c])=>`<span class="chip"><b class="${tone(n,w,c)}">${
       n===null?L("从未"):n===0?L("今天"):FMT.nDays(n)}</b> ${L(name)}</span>`).join("");
 
+  // 日总结流水：记「做了但没做完」的——挂任务可选（父任务或未完成子任务）
+  // 子任务没有独立 id：存 taskId（父，颜色来源）+ sub（文本快照，不怕下标漂移）
+  dlogOpts = [];
+  openTodos().forEach(t=>{
+    dlogOpts.push({id:t.id, label:t.title});
+    (t.subs||[]).forEach(s=>{ if(!s.done) dlogOpts.push({id:t.id, sub:s.t, label:s.t}); });
+  });
+  const logsToday = all("daylog").filter(d=>d.day===dayKey())
+                      .sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  const dlRows = logsToday.map(d=>{
+    const t = d.taskId ? allTodos().find(x=>x.id===d.taskId) : null;
+    const link = t ? `<span class="pill">${esc(t.title)}${d.sub?" · "+esc(d.sub):""}</span>` : "";
+    return `<div class="row dl ${t?tagCls(t):""}">
+      <div class="main"><div class="title">${esc(d.text)}</div>${link?`<div class="meta">${link}</div>`:""}</div>
+      <div class="acts"><button class="btn link" data-del="${d.id}">×</button></div></div>`;
+  }).join("");
+  const dlSelect = `<select id="dlTask" class="dl-sel"><option value="">${L("不挂任务")}</option>${
+    dlogOpts.map((o,i)=>`<option value="${i}">${o.sub?"\u3000· ":""}${esc(o.label)}</option>`).join("")}</select>`;
+
   return `
     <h2>${L("今天")}</h2>
     <p class="sub">${new Date().toLocaleDateString(LOCALE(),{month:"long",day:"numeric",weekday:"long"})}</p>
 
     <div class="card"><h4>${L("待办 · 进入窗口的")}</h4>${todoRows}
       <input class="sub-in qt" id="qtText" placeholder="${L("临时任务，回车即存")}"></div>
+    <div class="card"><h4>${L("今天动了什么")}</h4>${dlRows}
+      <div class="dl-in"><input class="sub-in" id="dlText" placeholder="${L("做了但没做完的，回车记一笔")}">${dlSelect}</div></div>
     ${appts.length?`<div class="card"><h4>${L("预约")}</h4>${apptRows}</div>`:""}
     ${evts.length?`<div class="card"><h4>${L("接下来的活动")}</h4>${evtRows}</div>`:""}
 
@@ -859,6 +895,11 @@ function viewCal(){
   });
   all("event").forEach(e=> e.date && push(e.date, e.title,
       "event"+(e.status==="没去"?" done":"")));      // 「没去」划掉但保留——对照组
+  // 日总结流水：虚线=过程（碰过没完成）；挂了任务跟 tag 色，没挂灰。任务被删则退灰
+  all("daylog").forEach(d=>{
+    const t = d.taskId ? allTodos().find(x=>x.id===d.taskId) : null;
+    push(d.day, d.text, "dlog "+(t ? "task "+tagCls(t) : "tMisc"));
+  });
 
   const first = new Date(y,m,1);
   const start = new Date(first);
@@ -895,7 +936,7 @@ function viewCal(){
       <button class="btn quiet" id="calPrev">‹</button>
       <b>${FMT.monthTitle(y,m)}</b>
       <button class="btn quiet" id="calNext">›</button>
-      <span class="legend"><i class="appt">${L("预约")}</i><i class="task">${L("课程")}</i><i class="tCareer">${L("申请")}</i><i class="tSelf">${L("自驱")}</i><i class="tMisc">${L("其他待办")}</i><i class="event">${L("活动")}</i></span>
+      <span class="legend"><i class="appt">${L("预约")}</i><i class="task">${L("课程")}</i><i class="tCareer">${L("申请")}</i><i class="tSelf">${L("自驱")}</i><i class="tMisc">${L("其他待办")}</i><i class="event">${L("活动")}</i><i class="dlog">${L("过程")}</i></span>
     </div>
     <div class="calGrid">${wd}${cells}</div>
     <h3>${L("排期中的预约")}</h3>${upRows}`;
@@ -975,6 +1016,11 @@ function render(){
   const qt0 = $("qtText");
   const qtDraft = qt0 ? qt0.value : "";
   const qtFocus = qt0 && document.activeElement === qt0;
+  const dl0 = $("dlText");
+  const dlDraft = dl0 ? dl0.value : "";
+  const dlFocus = dl0 && document.activeElement === dl0;
+  const ds0 = $("dlTask");
+  const dlSelV = ds0 ? ds0.value : "";
   const entering = view !== lastView; lastView = view;
   renderNav();
   $("main").innerHTML = VIEWS[view]();
@@ -1027,6 +1073,23 @@ function render(){
   }
   if(qtDraft && $("qtText")) $("qtText").value = qtDraft;
   if(qtFocus && $("qtText")) $("qtText").focus();
+  // 日总结流水：Enter 即存 day=今天；下拉挂任务可选。存后保留下拉选择——连续记同一任务不用重选
+  if($("dlText")){
+    const din = $("dlText");
+    din.onkeydown = e => {
+      if(e.key!=="Enter") return;
+      const v = din.value.trim(); if(!v) return;
+      const sel = $("dlTask");
+      const o = sel && sel.value!=="" ? dlogOpts[+sel.value] : null;
+      din.value = "";                                   // 先清再存，同 qtText
+      put({id:crypto.randomUUID(), type:"daylog", day:dayKey(), text:v,
+           taskId: o?o.id:null, sub: o&&o.sub?o.sub:null});
+      if($("dlText")) $("dlText").focus();
+    };
+  }
+  if(dlDraft && $("dlText")) $("dlText").value = dlDraft;
+  if(dlSelV && $("dlTask")) $("dlTask").value = dlSelV;
+  if(dlFocus && $("dlText")) $("dlText").focus();
   // 子任务：整行点 = 勾选，× = 删除，＋ = 展开输入框（Enter 存并连续录入，Esc 收起）
   const subRef = v => { const p=v.lastIndexOf("|"); return [v.slice(0,p), +v.slice(p+1)]; };
   document.querySelectorAll("[data-subtoggle]").forEach(el=> el.onclick=()=>{
